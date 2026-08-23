@@ -164,7 +164,7 @@ export default class NuonuoApp extends Component {
         const actions: Array<() => void> = [
             () => this.pauseGame(),
             () => this._game.undo(),
-            () => this._game.restart(),
+            () => this._game.refresh(),
             () => this.toast("道具未实现"),
             () => this._game.restart(),
         ];
@@ -222,7 +222,7 @@ export default class NuonuoApp extends Component {
         const win = r.win;
         this.label(overlay, "title", win ? "通关成功！" : "关卡无法完成", 64, 0, 240, win ? C_GREEN : C_PRIMARY);
         this.label(overlay, "moves", `共移动 ${r.steps} 次`, 32, 0, 130, C_WHITE);
-        this.label(overlay, "refresh", "刷新 0 次", 32, 0, 70, C_WHITE);
+        this.label(overlay, "refresh", `刷新 ${gameState.refreshesUsed} 次`, 32, 0, 70, C_WHITE);
 
         const primaryText = win ? (r.hasNext ? "下一关" : "通关啦") : "重试";
         this.btn(overlay, "btn_primary", primaryText, 0, -60, 360, 110, C_PRIMARY, () => {

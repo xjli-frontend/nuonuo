@@ -11,7 +11,7 @@
  */
 import {
     _decorator, Component, Node, Label, Graphics, Color, UITransform, EventTouch, v3,
-    Sprite, SpriteFrame, Texture2D, resources, log,
+    Sprite, SpriteFrame, Texture2D, resources, log, UIOpacity,
 } from 'cc';
 const { ccclass } = _decorator;
 
@@ -74,6 +74,9 @@ const C_BOARD_BG: RGB = [212, 184, 150]; // #d4b896 原版棋盘木色
 const C_HIGHLIGHT: RGB = [255, 215, 0];
 
 const ONEWAY_ARROW: Record<string, string> = { up: '↑', down: '↓', left: '←', right: '→' };
+
+// 堆叠每层偏移（px）：对齐原版挪挪收纳屋 GameConfig.STACK_OFFSET_Y
+const STACK_OFFSET_Y = 9;
 
 /** HUD 数据（每次重绘后回传给宿主，用于顶栏显示） */
 export interface HudData {
@@ -176,8 +179,8 @@ export default class NuonuoGame extends Component {
         return NuonuoGame._preloadPromise;
     }
 
-    /** 用指定 SpriteFrame 铺一个正方形子节点（按 inset 内缩，可选中心偏移） */
-    private addSprite(parent: Node, sf: SpriteFrame, cs: number, inset: number = 0, offset: [number, number] = [0, 0]): void {
+    /** 用指定 SpriteFrame 铺一个正方形子节点（按 inset 内缩，可选中心偏移与透明度），返回该节点 */
+    private addSprite(parent: Node, sf: SpriteFrame, cs: number, inset: number = 0, offset: [number, number] = [0, 0], alpha: number = 1): Node {
         const n = new Node("spr");
         n.layer = parent.layer;
         parent.addChild(n);
@@ -187,6 +190,10 @@ export default class NuonuoGame extends Component {
         const spr = n.addComponent(Sprite);
         spr.sizeMode = Sprite.SizeMode.CUSTOM;
         spr.spriteFrame = sf;
+        if (alpha < 1) {
+            n.addComponent(UIOpacity).opacity = Math.round(alpha * 255);
+        }
+        return n;
     }
 
     /** 按缓存键取贴图铺格子；贴图未就绪返回 false，调用方走程序化回退 */
@@ -214,6 +221,8 @@ export default class NuonuoGame extends Component {
 
         // 让 gameState 的 currentLevel 与展示保持一致（并重置其内部计数）
         gameState.setLevel(level);
+        // 刷新次数上限：关卡可自定义，默认 3 次（对齐挪挪收纳屋）
+        gameState.setMaxRefreshes(this.levelCfg.maxRefreshes ?? 3);
 
         this.stepsUsed = 0;
         this.totalItems = cfg.items.length;
@@ -362,56 +371,40 @@ export default class NuonuoGame extends Component {
         this.addCellText(node, `门${cell.portalId ?? ''}`, cs, [255, 255, 255]);
     }
 
-    /** 目标格：item_N_1 剪影贴图（自带虚线框+剪影）或程序化回退，叠加归位计数 */
+    /** 目标格：item_N_1 剪影贴图（自带虚线框+剪影）或程序化回退；归位与否都不叠加计数角标 */
     private renderTarget(node: Node, g: Graphics, cell: CellData, cs: number, x: number, y: number, w: number, rad: number): void {
         const id = ITEM_ID[cell.targetType];
         const key = id ? `item_${id}_1` : null;
         if (key && this.trySprite(node, key, cs)) {
-            if ((cell.placedCount ?? 0) > 0) {
-                this.addCellBadge(node, `×${cell.placedCount}`, cs, [34, 197, 94]);
-            }
             return;
         }
         this.fillRect(g, C_EMPTY, x, y, w, rad);
         this.drawTargetBorder(g, x, y, w, rad);
         this.drawGhost(g, cell.targetType, x, y, w);
         this.addCellText(node, ITEM_NAMES[cell.targetType] ?? '?', cs, [120, 90, 50]);
-        if ((cell.placedCount ?? 0) > 0) {
-            this.addCellBadge(node, `×${cell.placedCount}`, cs, [34, 197, 94]);
-        }
     }
 
-    /** 物品：gezi 底 + (选中垫 xuanzhogn) + dizuo 底座 + item_N 图标，或程序化色卡回退 */
+    /** 物品：gezi 底 + 按 stack 从下到上绘制阶梯堆叠（dizuo 底座 + item_N 图标），或程序化色卡回退 */
     private renderItem(node: Node, g: Graphics, cell: CellData, r: number, c: number, cs: number, x: number, y: number, w: number, rad: number): void {
         // 底层格子
         if (!this.trySprite(node, 'gezi', cs)) this.fillRect(g, C_EMPTY, x, y, w, rad);
 
-        // 拖拽中：源格只画底，物品本体交给跟随手指的浮动预览（避免双份显示）
-        if (this.dragFrom && this.dragFrom[0] === r && this.dragFrom[1] === c) {
-            return;
+        const stack = (cell.stack && cell.stack.length) ? cell.stack : [{ type: cell.itemType!, layer: cell.layer ?? 1 }];
+        const isDragSource = this.dragFrom && this.dragFrom[0] === r && this.dragFrom[1] === c;
+        const stackOffset = STACK_OFFSET_Y;
+        // 可见层数（拖拽中顶层由跟手预览承载，不算在堆叠内）
+        const visibleCount = isDragSource ? stack.length - 1 : stack.length;
+        // 整体垂直居中：阶梯向下的总高度 = (visibleCount-1)*stackOffset，居中使其关于格心对称
+        const centering = (visibleCount - 1) * stackOffset / 2;
+
+        // 从最下层画到最上层：下层向下偏移 + 降透明度，形成向下阶梯堆叠（整体居中于格子，下层往下露）
+        for (let i = stack.length - 1; i >= 0; i--) {
+            // 拖拽中：顶层由跟手预览承载，源格只画下层，让玩家看到堆叠结构
+            if (isDragSource && i === 0) continue;
+            const layerIndex = isDragSource ? i - 1 : i; // 0 = 当前可见顶层
+            this.drawItemLayer(node, g, stack[i].type, cs, x, y, w, rad, layerIndex, stackOffset, centering);
         }
 
-        const id = ITEM_ID[cell.itemType];
-        const dizuo = id ? NuonuoGame._sfCache.get('dizuo') : null;
-        const itemSf = id ? NuonuoGame._sfCache.get(`item_${id}`) : null;
-
-        if (dizuo && itemSf) {
-            // 选中态：先垫金黄色高亮底座（xuanzhogn 需垫底）
-            if (this.dragFrom && this.dragFrom[0] === r && this.dragFrom[1] === c) {
-                this.trySprite(node, 'xuanzhogn', cs);
-            }
-            const pad = Math.max(4, cs * 0.08);
-            this.addSprite(node, dizuo, cs, pad);
-            const iconInset = pad + (cs - pad * 2) * 0.15;
-            this.addSprite(node, itemSf, cs, iconInset);
-        } else {
-            this.drawItemCard(g, cell, x, y, w, rad);
-            this.addCellText(node, ITEM_NAMES[cell.itemType] ?? '?', cs, [255, 255, 255]);
-        }
-
-        if (cell.stack && cell.stack.length > 1) {
-            this.addCellBadge(node, `×${cell.stack.length}`, cs, [255, 255, 255]);
-        }
         if (cell.freezeCounter === -1) {
             // 物品下方已结冰：冰蓝描边 + 左上角雪花标记（贴图就绪时）
             g.lineWidth = 3;
@@ -419,6 +412,34 @@ export default class NuonuoGame extends Component {
             g.roundRect(x, y, w, w, rad);
             g.stroke();
             this.trySprite(node, 'snow', cs, cs * 0.34, [-cs * 0.3, cs * 0.3]);
+        }
+    }
+
+    /** 画单个物品层（含堆叠偏移、整体居中与透明度），layerIndex=0 为可见顶层 */
+    private drawItemLayer(node: Node, g: Graphics, itemType: ItemType, cs: number, x: number, y: number, w: number, rad: number, layerIndex: number, stackOffset: number, centering: number = 0): void {
+        // offsetY 正数 = 向下；centering 让整体居中，下层往下露（layerIndex 越大越靠下）
+        const offsetY = layerIndex * stackOffset - centering;
+        const alpha = layerIndex === 0 ? 1 : 1 - layerIndex * 0.15;
+        const id = ITEM_ID[itemType];
+        const dizuo = id ? NuonuoGame._sfCache.get('dizuo') : null;
+        const itemSf = id ? NuonuoGame._sfCache.get(`item_${id}`) : null;
+
+        if (dizuo && itemSf) {
+            const pad = Math.max(4, cs * 0.08);
+            this.addSprite(node, dizuo, cs, pad, [0, -offsetY], alpha);
+            const iconInset = pad + (cs - pad * 2) * 0.15;
+            this.addSprite(node, itemSf, cs, iconInset, [0, -offsetY], alpha);
+        } else {
+            const rgb = ITEM_COLORS[itemType] || [200, 200, 200];
+            const a = Math.round(255 * alpha);
+            const oy = -offsetY;
+            const pad = w * 0.14;
+            g.fillColor = new Color(245, 232, 208, a);
+            g.roundRect(x, y + oy, w, w, rad);
+            g.fill();
+            g.fillColor = new Color(rgb[0], rgb[1], rgb[2], a);
+            g.roundRect(x + pad, y + pad + oy, w - pad * 2, w - pad * 2, rad * 0.8);
+            g.fill();
         }
     }
 
@@ -632,9 +653,121 @@ export default class NuonuoGame extends Component {
         this.render();
     }
 
-    /** 重开本关（「刷新」按钮也走这里，核心无重洗） */
+    /** 重开本关：整关重置回初始状态（区别于 refresh 的原地重洗） */
     public restart(): void {
         this.initLevel(this.level);
+    }
+
+    /**
+     * 刷新：把所有未归位物品重新随机排列（对齐挪挪收纳屋 SceneGame.refresh）。
+     * 规则：同格堆叠不拆散、目标格不动、已归位物品不动、随机分配到可用落点。
+     */
+    public refresh(): void {
+        if (!gameState.canRefresh()) {
+            this.onTip?.("刷新次数已用完");
+            return;
+        }
+        gameState.useRefresh();
+
+        // 第一步：收集所有未归位物品（按堆叠分组，同格物品保持在一起）。
+        // 归位物品的格子 cell.type 已是 TARGET（placedCount>0），不会出现在 ITEM 格里。
+        const groups: { row: number; col: number; stack: { type: ItemType; layer: number }[] }[] = [];
+        for (let r = 0; r < this.rows; r++) {
+            for (let c = 0; c < this.cols; c++) {
+                const cell = this.board.getCell(r, c);
+                if (!cell || cell.type !== CellType.ITEM) continue;
+                const stack = (cell.stack && cell.stack.length)
+                    ? cell.stack
+                    : [{ type: cell.itemType!, layer: cell.layer ?? 1 }];
+                groups.push({ row: r, col: c, stack });
+            }
+        }
+
+        // 第二步：收集可用落点（空格/水洼/传送门/未归位物品原位；排除障碍/目标格/机关格/冰块）
+        const available: [number, number][] = [];
+        for (let r = 0; r < this.rows; r++) {
+            for (let c = 0; c < this.cols; c++) {
+                const cell = this.board.getCell(r, c);
+                if (!cell) continue;
+                if (cell.type === CellType.OBSTACLE) continue;
+                if (cell.type === CellType.TARGET) continue;      // 目标格不参与随机放置
+                if (cell.type === CellType.ONEWAY) continue;      // 单向门是通道地形
+                if (cell.type === CellType.BUTTON) continue;      // 按钮是机关格
+                if (cell.type === CellType.ACTIVE_WALL || cell.type === CellType.ACTIVE_BRIDGE) continue;
+                if (cell.type === CellType.ICE) continue;         // 冰块是永久障碍
+                available.push([r, c]);
+            }
+        }
+
+        // 第三步：打乱可用落点
+        for (let i = available.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [available[i], available[j]] = [available[j], available[i]];
+        }
+
+        // 清空未归位物品原来的格子（恢复底层地形）
+        for (const g of groups) {
+            const cell = this.board.getCell(g.row, g.col);
+            if (cell) this.restoreUnderlyingTerrain(cell);
+        }
+
+        // 重新分配新位置（组内物品分到同一格）
+        let idx = 0;
+        for (const g of groups) {
+            if (idx >= available.length) break;
+            const [nr, nc] = available[idx++];
+            const cell = this.board.getCell(nr, nc);
+            if (cell) {
+                cell.type = CellType.ITEM;
+                cell.itemType = g.stack[0].type;
+                cell.layer = g.stack[0].layer;
+                cell.stack = g.stack.map(it => ({ type: it.type, layer: it.layer }));
+                // 保留 portalId / freezeCounter / targetType 等附加属性（落点若在传送门/水洼/目标格上）
+            }
+        }
+
+        // 刷新后不能撤销之前的操作；物品位置变化，重新结算按钮与活动墙/桥态
+        this.history = [];
+        this.board.recalcButtons();
+        this.render();
+        this.onTip?.(`已刷新，剩余 ${gameState.refreshesLeft} 次`);
+    }
+
+    /** 恢复格子为底层地形（镜像 Board.moveItem 的「处理起始格」逻辑） */
+    private restoreUnderlyingTerrain(cell: CellData): void {
+        cell.itemType = undefined;
+        cell.layer = undefined;
+        cell.stack = undefined;
+
+        if (cell.freezeCounter === -1) {
+            // 物品下方已结冰 → 恢复为冰块
+            cell.type = CellType.ICE;
+            cell.freezeCounter = undefined;
+            cell.portalId = undefined;
+            cell.portalUses = undefined;
+            cell.targetType = undefined;
+            cell.onewayDir = undefined;
+            cell.buttonId = undefined;
+            cell.buttonPressed = undefined;
+            cell.barrierId = undefined;
+            cell.barrierKind = undefined;
+            cell.barrierActive = undefined;
+        } else if (cell.portalId !== undefined) {
+            cell.type = CellType.PORTAL;
+        } else if (cell.onewayDir !== undefined) {
+            cell.type = CellType.ONEWAY;
+        } else if (cell.buttonId !== undefined) {
+            cell.type = CellType.BUTTON;
+            cell.buttonPressed = false;
+        } else if (cell.barrierId !== undefined) {
+            cell.type = cell.barrierKind === 'wall' ? CellType.ACTIVE_WALL : CellType.ACTIVE_BRIDGE;
+            cell.barrierActive = false;
+        } else if (cell.targetType) {
+            cell.type = CellType.TARGET;
+        } else {
+            cell.type = CellType.EMPTY;
+            cell.targetType = undefined;
+        }
     }
 
     // ========== 胜负判定 ==========
@@ -711,19 +844,6 @@ export default class NuonuoGame extends Component {
         const pad = w * 0.3;
         g.fillColor = new Color(rgb[0], rgb[1], rgb[2], 70);
         g.roundRect(x + pad, y + pad, w - pad * 2, w - pad * 2, 8);
-        g.fill();
-    }
-
-    private drawItemCard(g: Graphics, cell: CellData, x: number, y: number, w: number, rad: number): void {
-        // 底座（浅色）
-        g.fillColor = new Color(245, 232, 208, 255);
-        g.roundRect(x, y, w, w, rad);
-        g.fill();
-        // 物品卡片（按类型着色）
-        const rgb = ITEM_COLORS[cell.itemType] || [200, 200, 200];
-        const pad = w * 0.14;
-        g.fillColor = new Color(rgb[0], rgb[1], rgb[2], 255);
-        g.roundRect(x + pad, y + pad, w - pad * 2, w - pad * 2, rad * 0.8);
         g.fill();
     }
 
