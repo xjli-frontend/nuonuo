@@ -377,6 +377,7 @@ const reportIds = ["BCBgAAoXHx5d1QpzuGCJR1"];
 const videoIds = [
     "adunit-27790c1980b36ebb",   // 道具 - 撤回
     "adunit-ea1f4d5ea4698881",   // 道具 - 刷新
+    "adunit-xxxxxxxxxxxxxxxx",   // 广告续命 - 加步数（预留，接入正式广告时替换）
 ]
 
 

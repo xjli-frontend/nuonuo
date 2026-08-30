@@ -10,7 +10,7 @@
 import {
     _decorator, Component, Node, Label, Graphics, Color, UITransform,
     ScrollView, Mask, UIOpacity, tween, BlockInputEvents,
-    Sprite, SpriteFrame, resources, Tween, v3, sys,
+    Sprite, SpriteFrame, resources, Tween, v3, sys, view, Size,
 } from 'cc';
 const { ccclass } = _decorator;
 
@@ -29,14 +29,13 @@ const C_PAGE_BG: RGB = [22, 33, 62];        // #16213e
 const C_PRIMARY: RGB = [233, 69, 96];       // #e94560
 const C_GOLD: RGB = [245, 197, 24];         // #f5c518
 const C_BLUE: RGB = [59, 130, 246];         // 选关按钮
-const C_LOCKED: RGB = [51, 61, 76];         // 未解锁关卡
 const C_SUBTEXT: RGB = [170, 180, 200];     // 副标题/次级文字
 const C_WHITE: RGB = [255, 255, 255];
 const C_BROWN: RGB = [135, 94, 45];        // #875E2D 关卡界面文字/数字统一色
 
-// ========== 布局（设计分辨率 768×1344） ==========
-const SCREEN_W = 768;
-const SCREEN_H = 1344;
+// ========== 布局（设计分辨率 768×1344，布局坐标按设计稿写死） ==========
+// 全屏底板/遮罩不按设计分辨率铺，统一用 view.getVisibleSize()（见 visSize）：
+// 真机宽高比与设计分辨率不同时可见区会扩展，固定 768×1344 会铺不满留边。
 
 // ========== 功能开关 ==========
 /**
@@ -79,7 +78,8 @@ export default class NuonuoApp extends Component {
     private newScreen(name: string): Node {
         const n = new Node(name);
         n.layer = this.node.layer;
-        n.addComponent(UITransform).setContentSize(SCREEN_W, SCREEN_H);
+        const vs = this.visSize();
+        n.addComponent(UITransform).setContentSize(vs.width, vs.height);
         return n;
     }
 
@@ -89,6 +89,11 @@ export default class NuonuoApp extends Component {
         this.node.addChild(root);
     }
 
+    /** 当前可见区域尺寸（设计坐标，随屏幕宽高比动态变化），全屏底板/遮罩按它铺满 */
+    private visSize(): Size {
+        return view.getVisibleSize();
+    }
+
     // ========== 菜单页 ==========
 
     private showMenu(): void {
@@ -96,7 +101,7 @@ export default class NuonuoApp extends Component {
 
         // 背景：先铺原版底色兜底，再异步加载 first_bg.jpg 贴图覆盖（未就绪回退纯色）
         this.fullBg(root, C_MENU_BG);
-        this.loadFirstSprite(root, "first_bg", SCREEN_W, SCREEN_H, 0, 0, null);
+        this.loadFullBgSprite(root, 'first', 'first_bg');
 
         // 同一行三按钮：排行榜(左) · 开始(中) · 每日奖励(右)
         this.loadFirstSprite(root, "btn_rank", 139, 123, -266, -320, () => this.openRank());
@@ -163,7 +168,7 @@ export default class NuonuoApp extends Component {
 
         // 背景：先铺兜底色，再异步加载 level_bg.jpg 覆盖（未就绪回退纯色）
         this.fullBg(root, C_PAGE_BG);
-        this.loadLevelSprite(root, "level_bg", SCREEN_W, SCREEN_H, 0, 0, null);
+        this.loadFullBgSprite(root, 'level', 'level_bg');
 
         // 顶部底板（static_bg 九宫格）：剩余物品/关卡信息；设置按钮放左上角
         const topPlate = this.loadPlate(root, 620, 110, 0, 515);
@@ -207,10 +212,11 @@ export default class NuonuoApp extends Component {
         mask.layer = this._screen.layer;
         this._screen.addChild(mask);
         mask.setPosition(0, 0, 0);
-        mask.addComponent(UITransform).setContentSize(SCREEN_W, SCREEN_H);
+        const vs = this.visSize();
+        mask.addComponent(UITransform).setContentSize(vs.width, vs.height);
         const g = mask.addComponent(Graphics);
         g.fillColor = this.makeColor([0, 0, 0], 150);
-        g.rect(-SCREEN_W / 2, -SCREEN_H / 2, SCREEN_W, SCREEN_H);
+        g.rect(-vs.width / 2, -vs.height / 2, vs.width, vs.height);
         g.fill();
         mask.addComponent(BlockInputEvents);
 
@@ -310,10 +316,11 @@ export default class NuonuoApp extends Component {
         overlay.layer = this.node.layer;
         this.node.addChild(overlay);
         overlay.setPosition(0, 0, 0);
-        overlay.addComponent(UITransform).setContentSize(SCREEN_W, SCREEN_H);
+        const vs = this.visSize();
+        overlay.addComponent(UITransform).setContentSize(vs.width, vs.height);
         const g = overlay.addComponent(Graphics);
         g.fillColor = this.makeColor([0, 0, 0], 140); // rgba(0,0,0,0.55)
-        g.rect(-SCREEN_W / 2, -SCREEN_H / 2, SCREEN_W, SCREEN_H);
+        g.rect(-vs.width / 2, -vs.height / 2, vs.width, vs.height);
         g.fill();
         overlay.addComponent(BlockInputEvents);
 
@@ -382,17 +389,12 @@ export default class NuonuoApp extends Component {
     // ========== 结果弹窗 ==========
 
     private showResult(r: ResultData): void {
-        const overlay = new Node("result");
-        overlay.layer = this.node.layer;
-        this.node.addChild(overlay);
-        overlay.setPosition(0, 0, 0);
-        overlay.addComponent(UITransform).setContentSize(SCREEN_W, SCREEN_H);
-        const g = overlay.addComponent(Graphics);
-        g.fillColor = this.makeColor([0, 0, 0], 178); // 约 70% 不透明蒙版（255×0.7≈178）
-        g.rect(-SCREEN_W / 2, -SCREEN_H / 2, SCREEN_W, SCREEN_H);
-        g.fill();
-        overlay.addComponent(BlockInputEvents);
-
+        // 步数耗尽但本关还有看广告加步数次数 → 续命弹窗（对齐源工程 checkStepLimit），不进失败结算
+        if (r.stepLimit) {
+            this.showStepLimitPopup(r);
+            return;
+        }
+        const overlay = this.makeOverlay("result");
         if (r.win) {
             // ===== 挑战成功：result 贴图（底板 + 标题 + 继续按钮），三者拉开间距 =====
             const resultBg = this.loadSprite(overlay, 'result', 'result_bg', 401, 429, 0, 20, null);
@@ -421,23 +423,93 @@ export default class NuonuoApp extends Component {
                 this.showMenu();
             }, this);
         } else {
-            // ===== 挑战失败：保留原逻辑（文字 + 重试 / 选关 / 主页） =====
-            this.label(overlay, "title", "关卡无法完成", 64, 0, 240, C_PRIMARY);
-            this.label(overlay, "moves", `共移动 ${r.steps} 次`, 32, 0, 130, C_WHITE);
-            this.label(overlay, "refresh", `使用刷新道具 ${gameState.levelRefreshSpent} 个`, 32, 0, 70, C_WHITE);
-            this.btn(overlay, "btn_primary", "重试", 0, -60, 360, 110, C_PRIMARY, () => {
-                overlay.destroy();
-                this.startGame(r.level);
-            });
-            this.btn(overlay, "btn_select", "选关", -130, -230, 240, 84, C_WHITE, () => {
-                overlay.destroy();
-                this.showLevelSelect();
-            }, 64);
-            this.btn(overlay, "btn_home", "主页", 130, -230, 240, 84, C_WHITE, () => {
-                overlay.destroy();
-                this.showMenu();
-            }, 77);
+            // ===== 挑战失败：文字 + 重试 / 选关 / 主页 =====
+            this.buildFailUi(overlay, r);
         }
+    }
+
+    /** 全屏半透明遮罩（结果 / 续命弹窗共用），带 BlockInputEvents 吞掉下层点击 */
+    private makeOverlay(name: string): Node {
+        const overlay = new Node(name);
+        overlay.layer = this.node.layer;
+        this.node.addChild(overlay);
+        overlay.setPosition(0, 0, 0);
+        const vs = this.visSize();
+        overlay.addComponent(UITransform).setContentSize(vs.width, vs.height);
+        const g = overlay.addComponent(Graphics);
+        g.fillColor = this.makeColor([0, 0, 0], 178); // 约 70% 不透明蒙版（255×0.7≈178）
+        g.rect(-vs.width / 2, -vs.height / 2, vs.width, vs.height);
+        g.fill();
+        overlay.addComponent(BlockInputEvents);
+        return overlay;
+    }
+
+    /** 挑战失败结算内容（重试 / 选关 / 主页），画在传入的遮罩上；失败结算与「放弃续命」共用 */
+    private buildFailUi(overlay: Node, r: ResultData): void {
+        this.label(overlay, "title", "关卡无法完成", 64, 0, 240, C_PRIMARY);
+        this.label(overlay, "moves", `共移动 ${r.steps} 次`, 32, 0, 130, C_WHITE);
+        this.label(overlay, "refresh", `使用刷新道具 ${gameState.levelRefreshSpent} 个`, 32, 0, 70, C_WHITE);
+        this.btn(overlay, "btn_primary", "重试", 0, -60, 360, 110, C_PRIMARY, () => {
+            overlay.destroy();
+            this.startGame(r.level);
+        });
+        this.btn(overlay, "btn_select", "选关", -130, -230, 240, 84, C_WHITE, () => {
+            overlay.destroy();
+            this.showLevelSelect();
+        }, 64);
+        this.btn(overlay, "btn_home", "主页", 130, -230, 240, 84, C_WHITE, () => {
+            overlay.destroy();
+            this.showMenu();
+        }, 77);
+    }
+
+    /**
+     * 步数耗尽续命弹窗（对齐源工程 checkStepLimit / createStepLimitButtons / renderStepLimitPopup）：
+     * 「看广告 +5步」按钮用 btn_video 贴图放大 + 文字，剩余次数实时显示；「放弃」进失败结算
+     */
+    private showStepLimitPopup(r: ResultData): void {
+        const overlay = this.makeOverlay("stepLimit");
+
+        // 面板（源工程 #1a1a2e）
+        const panel = this.panel(overlay, "panel", 0, 0, 560, 440, [26, 26, 46]);
+        this.label(panel, "title", "步数耗尽！", 44, 0, 180, C_GOLD);
+        this.label(panel, "sub", "看广告获得额外5步继续挑战", 26, 0, 128, C_SUBTEXT);
+        this.label(panel, "hint", `本关还可看广告 ${gameState.adStepsLeft} 次`, 26, 0, 78, C_GOLD);
+
+        // 看广告按钮：与「放弃」同款圆角底板（白色半透明），btn_video 小图 + 「看广告 +5步」文字同一个按钮，整块可点
+        const adBtn = new Node("btn_video");
+        adBtn.layer = panel.layer;
+        panel.addChild(adBtn);
+        adBtn.setPosition(0, -50, 0);
+        adBtn.addComponent(UITransform).setContentSize(320, 84);
+        const ag = adBtn.addComponent(Graphics);
+        ag.fillColor = this.makeColor(C_WHITE, 77);   // 与放弃按钮一致 rgba(255,255,255,0.3)
+        ag.roundRect(-160, -42, 320, 84, 16);
+        ag.fill();
+        this.loadSprite(adBtn, 'static', 'btn_video', 44, 45, -88, 0, null);
+        this.label(adBtn, "adText", "看广告 +5步", 30, 28, 0, C_WHITE, 190);
+        adBtn.on(Node.EventType.TOUCH_END, () => this.watchAdForSteps(overlay), this);
+        this.pressScale(adBtn);
+
+        // 放弃 → 清掉续命弹窗内容，原地转成失败结算（源工程 giveUpLevel）
+        this.btn(panel, "btn_giveup", "放弃", 0, -158, 320, 84, C_WHITE, () => {
+            overlay.removeAllChildren();
+            this.buildFailUi(overlay, r);
+        }, 77);
+    }
+
+    /** 看广告续命：微信走激励视频（预留广告位），其余环境直接发放；观看完毕记录次数并 +5步（对齐源工程 watchAdForSteps） */
+    private watchAdForSteps(overlay: Node): void {
+        PlatHelper.playVideo((success: boolean) => {
+            if (success) {
+                gameState.recordAdStep();
+                this._game.addSteps(5);
+                overlay.destroy();
+                this.toast(`看广告续命 +5步（本关剩余 ${gameState.adStepsLeft} 次）`);
+            } else {
+                this.toast('未看完广告，未获得步数');
+            }
+        }, VideoEnum.RewardedVideo.Prop_Steps);
     }
 
     // ========== UI 构建助手 ==========
@@ -451,10 +523,11 @@ export default class NuonuoApp extends Component {
         n.layer = parent.layer;
         parent.addChild(n);
         n.setPosition(0, 0, 0);
-        n.addComponent(UITransform).setContentSize(SCREEN_W, SCREEN_H);
+        const vs = this.visSize();
+        n.addComponent(UITransform).setContentSize(vs.width, vs.height);
         const g = n.addComponent(Graphics);
         g.fillColor = this.makeColor(rgb);
-        g.rect(-SCREEN_W / 2, -SCREEN_H / 2, SCREEN_W, SCREEN_H);
+        g.rect(-vs.width / 2, -vs.height / 2, vs.width, vs.height);
         g.fill();
         return n;
     }
@@ -465,7 +538,8 @@ export default class NuonuoApp extends Component {
         n.layer = parent.layer;
         parent.addChild(n);
         n.setPosition(x, y, 0);
-        n.addComponent(UITransform).setContentSize(w, h);
+        const uITransform = n.addComponent(UITransform);
+        uITransform.setContentSize(w, h);
         if (cb) {
             n.on(Node.EventType.TOUCH_END, () => cb(), this);
             this.pressScale(n);
@@ -476,6 +550,25 @@ export default class NuonuoApp extends Component {
             if (err || !sf || !n.isValid) return;
             const spr = n.addComponent(Sprite);
             spr.sizeMode = Sprite.SizeMode.CUSTOM;
+            spr.spriteFrame = sf;
+        });
+        return n;
+    }
+
+    /**
+     * 全屏背景大图：按贴图原始尺寸居中显示（first_bg / level_bg），不做拉伸。
+     * 图片尺寸以实际资源为准（后续会调整图片）：画布只露出中心部分，超出部分由屏幕两侧裁掉。
+     */
+    private loadFullBgSprite(parent: Node, folder: string, name: string): Node {
+        const n = new Node(name);
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.setPosition(0, 0, 0);
+        n.addComponent(UITransform);
+        resources.load(`nuonuo/${folder}/${name}/spriteFrame`, SpriteFrame, (err, sf) => {
+            if (err || !sf || !n.isValid) return;
+            // sizeMode 默认 TRIMMED：按 spriteFrame 原始尺寸渲染，节点尺寸由 Sprite 自动同步
+            const spr = n.addComponent(Sprite);
             spr.spriteFrame = sf;
         });
         return n;
@@ -666,10 +759,16 @@ export default class NuonuoApp extends Component {
         parent.addChild(n);
         n.setPosition(x, y, 0);
         n.addComponent(UITransform).setContentSize(size, size);
-        const g = n.addComponent(Graphics);
-        g.fillColor = this.makeColor(unlocked ? C_PRIMARY : C_LOCKED);
-        g.roundRect(-size / 2, -size / 2, size, size, 12);
-        g.fill();
+
+        // 格子底：棋盘默认格子贴图 gezi 铺满整格（Sprite），不再画 Graphics 圆角块；
+        // 未解锁用灰色调把贴图压暗
+        const spr = n.addComponent(Sprite);
+        spr.sizeMode = Sprite.SizeMode.CUSTOM;
+        spr.color = this.makeColor(unlocked ? C_WHITE : [120, 120, 120]);
+        resources.load('nuonuo/gezi/spriteFrame', SpriteFrame, (err, sf) => {
+            if (err || !sf || !n.isValid) return;
+            spr.spriteFrame = sf;
+        });
 
         const labNode = new Node("Label");
         labNode.layer = n.layer;
@@ -679,7 +778,8 @@ export default class NuonuoApp extends Component {
         lab.string = `${lv}`;
         lab.fontSize = 40;
         lab.isBold = true;
-        lab.color = this.makeColor(unlocked ? C_WHITE : C_SUBTEXT);
+        // gezi 底是浅米色（#ffdeab），数字改深色才看得清；未解锁整体变灰
+        lab.color = this.makeColor(unlocked ? C_BROWN : C_SUBTEXT);
         lab.horizontalAlign = Label.HorizontalAlign.CENTER;
         lab.verticalAlign = Label.VerticalAlign.CENTER;
         this.pressScale(n);

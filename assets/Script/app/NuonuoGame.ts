@@ -104,6 +104,8 @@ export interface ResultData {
     level: number;
     steps: number;
     hasNext: boolean;
+    /** 步数耗尽但本关还有看广告加步数次数 → 宿主弹「看广告 +5步」续命弹窗（非最终失败结算） */
+    stepLimit?: boolean;
 }
 
 @ccclass('NuonuoGame')
@@ -116,6 +118,7 @@ export default class NuonuoGame extends Component {
 
     // 本地 HUD 计数（步数/撤销由本层自管，通关进度交给 gameState 持久化）
     private stepsUsed: number = 0;
+    private maxSteps: number | null = null;   // 步数上限（看广告续命会动态 +5，不能直接读 levelCfg）
     private totalItems: number = 0;
 
     private boardRoot: Node = null;
@@ -236,6 +239,7 @@ export default class NuonuoGame extends Component {
         gameState.setLevel(level);
 
         this.stepsUsed = 0;
+        this.maxSteps = cfg.maxSteps ?? null;
         this.totalItems = cfg.items.length;
         this.history = [];
         this.dragFrom = null;
@@ -523,7 +527,7 @@ export default class NuonuoGame extends Component {
         this.onHud({
             level: this.level,
             steps: this.stepsUsed,
-            maxSteps: this.levelCfg.maxSteps ?? null,
+            maxSteps: this.maxSteps,
             placed: isClear ? this.clearCount(wc.targetType) : this.placedCount,
             total: isClear ? wc.targetCount : this.totalItems,
         });
@@ -832,6 +836,14 @@ export default class NuonuoGame extends Component {
         this.initLevel(this.level);
     }
 
+    /** 看广告续命：步数上限 +n（宿主在广告发放后调用；对齐源工程 watchAdForSteps 的 onReward） */
+    public addSteps(n: number): void {
+        if (this.maxSteps !== null) {
+            this.maxSteps += n;
+            this.updateHud();
+        }
+    }
+
     /**
      * 刷新：把所有未归位物品重新随机排列（对齐挪挪收纳屋 SceneGame.refresh）。
      * 规则：同格堆叠不拆散、目标格不动、已归位物品不动、随机分配到可用落点。
@@ -948,9 +960,20 @@ export default class NuonuoGame extends Component {
             if (this.placedCount >= this.totalItems) { this.onWin(); return; }
         }
 
-        const maxSteps = this.levelCfg.maxSteps ?? null;
-        if (maxSteps !== null && this.stepsUsed >= maxSteps) {
-            this.onFail();
+        if (this.maxSteps !== null && this.stepsUsed >= this.maxSteps) {
+            // 步数耗尽：本关还有看广告加步数次数 → 弹「看广告 +5步」续命弹窗（对齐源工程 checkStepLimit）；
+            // 次数用完 → 直接进失败结算
+            if (gameState.adStepsLeft > 0) {
+                this.onResult?.({
+                    win: false,
+                    stepLimit: true,
+                    level: this.level,
+                    steps: this.stepsUsed,
+                    hasNext: false,
+                });
+            } else {
+                this.onFail();
+            }
         }
     }
 
