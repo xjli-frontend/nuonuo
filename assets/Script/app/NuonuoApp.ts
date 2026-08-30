@@ -10,7 +10,7 @@
 import {
     _decorator, Component, Node, Label, Graphics, Color, UITransform,
     ScrollView, Mask, UIOpacity, tween, BlockInputEvents,
-    Sprite, SpriteFrame, Texture2D, resources, Tween, v3, sys,
+    Sprite, SpriteFrame, resources, Tween, v3, sys,
 } from 'cc';
 const { ccclass } = _decorator;
 
@@ -470,10 +470,10 @@ export default class NuonuoApp extends Component {
             n.on(Node.EventType.TOUCH_END, () => cb(), this);
             this.pressScale(n);
         }
-        resources.load(`nuonuo/${folder}/${name}/texture`, Texture2D, (err, tex) => {
-            if (err || !tex || !n.isValid) return;
-            const sf = new SpriteFrame();
-            sf.texture = tex;
+        // 注意按 spriteFrame 子资源加载：nuonuo/ 下有 auto-atlas 自动图集，
+        // 打包后 PNG 不再输出独立 texture 子资源（只剩指向图集的 spriteFrame）
+        resources.load(`nuonuo/${folder}/${name}/spriteFrame`, SpriteFrame, (err, sf) => {
+            if (err || !sf || !n.isValid) return;
             const spr = n.addComponent(Sprite);
             spr.sizeMode = Sprite.SizeMode.CUSTOM;
             spr.spriteFrame = sf;
@@ -498,10 +498,8 @@ export default class NuonuoApp extends Component {
         parent.addChild(n);
         n.setPosition(x, y, 0);
         n.addComponent(UITransform).setContentSize(w, h);
-        resources.load('nuonuo/static/static_bg/texture', Texture2D, (err, tex) => {
-            if (err || !tex || !n.isValid) return;
-            const sf = new SpriteFrame();
-            sf.texture = tex;
+        resources.load('nuonuo/static/static_bg/spriteFrame', SpriteFrame, (err, sf) => {
+            if (err || !sf || !n.isValid) return;
             // 九宫格四边（来自 static_bg.png.meta 的 border，贴图直接包 SpriteFrame 不携带，需手动补上）
             sf.insetLeft = 191;
             sf.insetRight = 191;
@@ -548,10 +546,8 @@ export default class NuonuoApp extends Component {
         n.addComponent(UITransform).setContentSize(size, size);
 
         // 圆底贴图 num_bg（直接用 Sprite；不再画黑色兜底，否则 Graphics 会和 Sprite 同节点冲突导致贴图不显示）
-        resources.load('nuonuo/level/num_bg/texture', Texture2D, (err, tex) => {
-            if (err || !tex || !n.isValid) return;
-            const sf = new SpriteFrame();
-            sf.texture = tex;
+        resources.load('nuonuo/level/num_bg/spriteFrame', SpriteFrame, (err, sf) => {
+            if (err || !sf || !n.isValid) return;
             const spr = n.addComponent(Sprite);
             spr.sizeMode = Sprite.SizeMode.CUSTOM;
             spr.spriteFrame = sf;

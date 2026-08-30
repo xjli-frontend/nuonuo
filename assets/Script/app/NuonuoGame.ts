@@ -11,7 +11,7 @@
  */
 import {
     _decorator, Component, Node, Label, Graphics, Color, UITransform, EventTouch, v3,
-    Sprite, SpriteFrame, Texture2D, resources, log, UIOpacity, tween,
+    Sprite, SpriteFrame, resources, log, UIOpacity, tween,
 } from 'cc';
 const { ccclass } = _decorator;
 
@@ -140,10 +140,8 @@ export default class NuonuoGame extends Component {
     public onTip: ((text: string) => void) | null = null;
 
     protected onLoad(): void {
-        // 预加载美术贴图，就绪后重绘（未就绪前走 Graphics 程序化回退）
-        this.preloadAssets().then(() => {
-            if (this.node && this.node.isValid) this.render();
-        });
+        // 提前预加载美术贴图（进程内一次性）；渲染时机由 initLevel 控制（贴图就绪前不渲染）
+        this.preloadAssets();
     }
 
     /** 由宿主调用：进入指定关卡（替代原 onLoad 自动开局） */
@@ -155,6 +153,7 @@ export default class NuonuoGame extends Component {
 
     private static _sfCache: Map<string, SpriteFrame> = new Map();
     private static _preloadPromise: Promise<void> | null = null;
+    private static _preloadDone = false;   // 预加载是否已结束（成功/失败都会置 true，失败走程序化回退）
 
     /** 预加载全部美术贴图（进程内一次性，重复调用复用同一 Promise） */
     private preloadAssets(): Promise<void> {
@@ -178,18 +177,16 @@ export default class NuonuoGame extends Component {
 
         NuonuoGame._preloadPromise = Promise.all(entries.map(([key, file]) =>
             new Promise<void>(resolve => {
-                // 图片默认被导入成 texture（无 spriteFrame 子资源），故直接加载 texture 再包一层 SpriteFrame；
-                // texture 子资源在 texture / sprite-frame 两种导入方式下都存在，两者都兼容。
-                resources.load(`nuonuo/${file}/texture`, Texture2D, (err, tex) => {
-                    if (!err && tex) {
-                        const sf = new SpriteFrame();
-                        sf.texture = tex;
-                        NuonuoGame._sfCache.set(key, sf);
-                    }
+                // 注意按 spriteFrame 子资源加载：nuonuo/ 下有 auto-atlas 自动图集，
+                // 打包后 PNG 不再输出独立 texture 子资源（只剩指向图集的 spriteFrame），
+                // 按 texture 加载在微信包内会失败（编辑器 asset DB 兼容所以预览正常）。
+                resources.load(`nuonuo/${file}/spriteFrame`, SpriteFrame, (err, sf) => {
+                    if (!err && sf) NuonuoGame._sfCache.set(key, sf);
                     resolve();
                 });
             })
         )).then(() => {
+            NuonuoGame._preloadDone = true;
             log(`[NuonuoGame] 美术贴图预加载完成 ${NuonuoGame._sfCache.size}/${entries.length}`);
         });
         return NuonuoGame._preloadPromise;
@@ -246,7 +243,15 @@ export default class NuonuoGame extends Component {
         this.clearDragPreview();
 
         this.ensureUI();
-        this.render();
+        // 贴图就绪前不渲染棋盘：缓存半满时渲染会出现「gezi 已就绪、物品/地形回退被 gezi 盖住」
+        // 的全默认格子中间态；等预加载结束（成功/失败都会 resolve）再渲染，已就绪则立即渲染。
+        if (NuonuoGame._preloadDone) {
+            this.render();
+        } else {
+            this.preloadAssets().then(() => {
+                if (this.node && this.node.isValid) this.render();
+            });
+        }
     }
 
     /** 只创建一次的棋盘容器，每关复用（HUD/按钮由宿主 NuonuoApp 提供） */
@@ -260,6 +265,9 @@ export default class NuonuoGame extends Component {
         this.boardRoot.layer = root.layer;
         root.addChild(this.boardRoot);
         this.boardRoot.setPosition(0, 0, 0);
+        // 注册触摸前必须先挂 UITransform：引擎触摸排序会读 node._uiProps.uiTransformComp.cameraPriority，
+        // 贴图预加载完成前（render 延后执行）无 UITransform 的触摸节点会直接崩溃
+        this.boardRoot.addComponent(UITransform);
         this.boardRoot.on(Node.EventType.TOUCH_START, this.onTouchStart, this);
         this.boardRoot.on(Node.EventType.TOUCH_MOVE, this.onTouchMove, this);
         this.boardRoot.on(Node.EventType.TOUCH_END, this.onTouchEnd, this);
