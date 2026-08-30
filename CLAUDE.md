@@ -21,10 +21,10 @@
 ## 关键约定 / 易踩坑
 - 脚本 `__type__` = `.ts.meta` 里 uuid 的压缩形式；**保留文件名 + `.meta` 不变、只改 `.ts` 内容**即可让 prefab/scene 里已有的 `__type__` 引用继续生效。
 - 新增界面**不写进 prefab/scene JSON**，改用运行时 `new Node()` + `node.addComponent(类引用)`，Cocos 导入时自动生成 `.meta`/uuid，免手算 `__type__`。
-- `nuonuo/core/GameState` 单例在模块导入时即读存档，所以存储适配器必须在 GameState 首次加载前注入：`NuonuoBootstrap.ts` 必须作为 `Main.ts` 的**首个 import**（ESM 深度优先求值保证先执行，否则读到默认内存存储）。
+- `nuonuo/core/GameState` 单例在模块导入时即读存档，所以存储适配器必须在 GameState 首次加载前注入：`NuonuoBootstrap.ts` 必须作为 `Main.ts` 的**首个 import**（ESM 深度优先求值保证先执行，否则读到默认内存存储）。另外引擎预览的模块求值顺序不保证按 import 图走，`NuonuoApp.boot()` 里还要兜底调一次 `gameState.reload()` 重读存档。
 - `Board.clone()` 是浅拷贝（共享 `stack` 引用），撤销快照要用 `JSON.stringify(board.grid)` 深拷贝。
 - 归位判定由 `Board.moveItem` 内部完成（匹配目标 → `placedCount++`），适配层只需扫描 `targetPositions` 统计，不要自己判断 placing。
-- 步数 / 归位计数由适配层自管（核心包无对减 API），只有 `maxUnlockedLevel`（通关进度）交给 `gameState.unlockLevel` 持久化。
+- 步数 / 归位计数由适配层自管（核心包无对减 API）；`maxUnlockedLevel` 即续玩进度：通关 `unlockLevel` +1、选关 `setUnlockedLevel` 直接设置，均即时落盘。菜单「开始」= `maxUnlockedLevel`。
 - 地形 / 物品有美术资源：`NuonuoGame.preloadAssets()` 预加载到静态 `_sfCache`，`renderCell` 优先贴图、未就绪回退 Graphics 程序化绘制。美术映射：障碍→`zhangai`、空格/物品底→`gezi`、目标→`item_N_1` 剪影、传送门→`portal_N`、物品→`dizuo`+`item_N`（选中垫 `xuanzhogn`）、水洼→`water`、冰块→`freeon`、冻结物品→`snow` 雪花标记；单向门 / 按钮 / 活动墙桥 / 落点高亮仍纯程序化。
 - 物品 9 种（`ItemType`），配色 / 单字名在 `NuonuoGame.ts` 顶部的 `ITEM_COLORS` / `ITEM_NAMES`，`ITEM_ID` 映射 `ItemType → 1~9`（对应 `item_N.png`）。
 - `NuonuoGame` 是框架无关模块（只依赖 `cc` 与 `nuonuo/` 核心包）：胜负 / 提示走 `onResult` / `onTip` 回调注入，HUD 走 `onHud`。改它时不要重新引入 `gui` / `ComponentExtends` / `Utils` 依赖；需要弹窗 / 飘字就在 `NuonuoApp` 里注入。

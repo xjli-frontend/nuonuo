@@ -70,6 +70,9 @@ export default class NuonuoApp extends Component {
     // ========== 入口 ==========
 
     public boot(): void {
+        // 兜底重读存档：引擎预览里模块求值顺序不保证，GameState 可能早于存储适配器注入就被
+        // 构造（读到内存空存档）；此刻 Main 的首个 import（NuonuoBootstrap）必已执行，重读拿真实存档
+        gameState.reload();
         this.showMenu();
     }
 
@@ -105,6 +108,7 @@ export default class NuonuoApp extends Component {
 
         // 同一行三按钮：排行榜(左) · 开始(中) · 每日奖励(右)
         this.loadFirstSprite(root, "btn_rank", 139, 123, -266, -320, () => this.openRank());
+        // 开始 = 续玩：从 maxUnlockedLevel 继续（通关自动 +1；选关点选会直接设为所选关卡）
         this.loadFirstSprite(root, "btn_start", 321, 125, 0, -320, () => this.startGame(gameState.maxUnlockedLevel));
 
         // 每日登录奖励入口（btn_login_award.png）+ 未领取红点
@@ -154,7 +158,11 @@ export default class NuonuoApp extends Component {
             const c = this.levelCell(content, lv, unlocked, x, y, cell);
             // 未解锁关卡：测试模式（SELECT_ALLOW_LOCKED）下也可点，正式流程则拦截
             if (unlocked || SELECT_ALLOW_LOCKED) {
-                c.on(Node.EventType.TOUCH_END, () => this.startGame(lv), this);
+                c.on(Node.EventType.TOUCH_END, () => {
+                    // 选关即记录进度（直接写 maxUnlockedLevel）：刷新游戏后「开始」仍回到这关
+                    gameState.setUnlockedLevel(lv);
+                    this.startGame(lv);
+                }, this);
             }
         }
 

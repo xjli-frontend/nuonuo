@@ -150,6 +150,14 @@ export class GameState {
     }
   }
 
+  /** 【选关流程】直接把解锁进度设为指定关卡（选关页点选即存，重进游戏从这关续玩；通关进度仍走 unlockLevel 递增） */
+  setUnlockedLevel(level: number): void {
+    if (level >= 1 && level !== this.data.maxUnlockedLevel) {
+      this.data.maxUnlockedLevel = level;
+      this.saveToStorage();
+    }
+  }
+
   /** 切换音效开关 */
   toggleSound(): void {
     this.data.soundEnabled = !this.data.soundEnabled;
@@ -296,6 +304,16 @@ export class GameState {
   }
 
   // ========== 本地存储 ==========
+
+  /**
+   * 重新读取存档。
+   * 构造器里已读一次，但引擎预览的模块求值顺序不保证适配器已注入
+   * （GameState 可能早于宿主的存储注入模块被求值，读到内存空存档）；
+   * 宿主 boot 时再显式调用一次即可兜底（见 NuonuoApp.boot）。
+   */
+  reload(): void {
+    this.loadFromStorage();
+  }
 
   /**
    * 从存储适配器加载存档（浏览器=localStorage，微信/Cocos=sys.localStorage，由宿主注入）
