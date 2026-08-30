@@ -10,12 +10,16 @@
 import {
     _decorator, Component, Node, Label, Graphics, Color, UITransform,
     ScrollView, Mask, UIOpacity, tween, BlockInputEvents,
+    Sprite, SpriteFrame, Texture2D, resources, Tween, v3, sys,
 } from 'cc';
 const { ccclass } = _decorator;
 
-import NuonuoGame, { HudData, ResultData } from '../hall/NuonuoGame';
+import NuonuoGame, { HudData, ResultData } from './NuonuoGame';
 import { gameState } from '../nuonuo/core/GameState';
+import { getStorageAdapter } from '../nuonuo/core/Storage';
 import { TOTAL_LEVELS } from '../nuonuo/config/LevelConfig';
+import { PlatHelper } from '../util/PlatHelper';
+import { VideoEnum } from '../enum/VideoEnum';
 
 type RGB = [number, number, number];
 
@@ -24,17 +28,15 @@ const C_MENU_BG: RGB = [15, 52, 96];        // #0f3460
 const C_PAGE_BG: RGB = [22, 33, 62];        // #16213e
 const C_PRIMARY: RGB = [233, 69, 96];       // #e94560
 const C_GOLD: RGB = [245, 197, 24];         // #f5c518
-const C_GREEN: RGB = [46, 204, 113];        // #2ecc71
 const C_BLUE: RGB = [59, 130, 246];         // 选关按钮
 const C_LOCKED: RGB = [51, 61, 76];         // 未解锁关卡
 const C_SUBTEXT: RGB = [170, 180, 200];     // 副标题/次级文字
 const C_WHITE: RGB = [255, 255, 255];
+const C_BROWN: RGB = [135, 94, 45];        // #875E2D 关卡界面文字/数字统一色
 
 // ========== 布局（设计分辨率 768×1344） ==========
 const SCREEN_W = 768;
 const SCREEN_H = 1344;
-const HUD_H = 90;
-const BAR_H = 112;
 
 // ========== 功能开关 ==========
 /**
@@ -54,6 +56,17 @@ export default class NuonuoApp extends Component {
     private hudLevel: Label = null;
     private hudSteps: Label = null;
     private hudProgress: Label = null;
+
+    // 底部「撤销 / 刷新」道具按钮节点（道具数量变化后重绘图标与角标）
+    private undoBtnNode: Node = null;
+    private refreshBtnNode: Node = null;
+
+    // 每日奖励弹窗内的「领取按钮 / 当前背包」文字（领取后刷新）
+    private dailyClaimLabel: Label = null;
+    private dailyBagLabel: Label = null;
+
+    // 菜单「每日奖励」按钮上的红点（领取后移除，避免残留）
+    private dailyDot: Node = null;
 
     // ========== 入口 ==========
 
@@ -80,22 +93,31 @@ export default class NuonuoApp extends Component {
 
     private showMenu(): void {
         const root = this.newScreen("menu");
+
+        // 背景：先铺原版底色兜底，再异步加载 first_bg.jpg 贴图覆盖（未就绪回退纯色）
         this.fullBg(root, C_MENU_BG);
+        this.loadFirstSprite(root, "first_bg", SCREEN_W, SCREEN_H, 0, 0, null);
 
-        this.label(root, "title", "挪挪收纳箱", 84, 0, 430);
-        this.label(root, "subtitle", "拖拽物品归位，享受整理治愈", 30, 0, 350, C_SUBTEXT);
-        this.label(root, "unlocked", `已解锁 ${gameState.maxUnlockedLevel} 关`, 28, 0, 180, C_GOLD);
+        // 同一行三按钮：排行榜(左) · 开始(中) · 每日奖励(右)
+        this.loadFirstSprite(root, "btn_rank", 139, 123, -266, -320, () => this.openRank());
+        this.loadFirstSprite(root, "btn_start", 321, 125, 0, -320, () => this.startGame(gameState.maxUnlockedLevel));
 
-        this.btn(root, "btn_start", `第 ${gameState.maxUnlockedLevel} 关`, 0, 60, 380, 112, C_PRIMARY, () => this.startGame(gameState.maxUnlockedLevel));
-        this.btn(root, "btn_select", "选择关卡（测试）", 0, -80, 380, 96, C_BLUE, () => this.showLevelSelect());
-        this.btn(root, "btn_sound", "音效", 0, -210, 300, 84, C_GOLD, () => {
-            gameState.toggleSound();
-            this.toast(gameState.soundEnabled ? "音效：开" : "音效：关");
-        });
+        // 每日登录奖励入口（btn_login_award.png）+ 未领取红点
+        this.dailyDot = null;
+        const dailyBtn = this.loadFirstSprite(root, "btn_login_award", 140, 128, 266, -320, () => this.showDailyRewardPopup());
+        if (!this.hasClaimedDaily()) this.dailyDot = this.redDot(dailyBtn, 60, 48);
 
-        this.label(root, "footer", "v1.0 - 纯玩法 Demo", 22, 0, -560, C_SUBTEXT);
+        // 选关（测试入口，仅浏览器平台显示）
+        if (sys.isBrowser) {
+            this.btn(root, "btn_select", "选关（测试）", -300, -560, 160, 60, C_BLUE, () => this.showLevelSelect());
+        }
 
         this.show(root);
+    }
+
+    /** 排行榜入口（占位空方法，后续接入开放数据域） */
+    private openRank(): void {
+        // TODO: 排行榜
     }
 
     // ========== 选关页 ==========
@@ -138,13 +160,17 @@ export default class NuonuoApp extends Component {
 
     private startGame(level: number): void {
         const root = this.newScreen("game");
-        this.fullBg(root, C_PAGE_BG);
 
-        // 顶部 HUD 条：左「第 X 关」/ 中「步数」/ 右「进度」
-        const hud = this.bar(root, "hud", 0, SCREEN_H / 2 - HUD_H / 2, SCREEN_W, HUD_H, 77);
-        this.hudLevel = this.label(hud, "lv", "", 30, -260, 0, C_WHITE, 220);
-        this.hudSteps = this.label(hud, "steps", "", 30, 0, 0, C_WHITE, 220);
-        this.hudProgress = this.label(hud, "prog", "", 30, 260, 0, C_WHITE, 220);
+        // 背景：先铺兜底色，再异步加载 level_bg.jpg 覆盖（未就绪回退纯色）
+        this.fullBg(root, C_PAGE_BG);
+        this.loadLevelSprite(root, "level_bg", SCREEN_W, SCREEN_H, 0, 0, null);
+
+        // 顶部底板（static_bg 九宫格）：剩余物品/关卡信息；设置按钮放左上角
+        const topPlate = this.loadPlate(root, 620, 110, 0, 515);
+        this.hudLevel = this.label(topPlate, "lv", "", 30, -200, 0, C_BROWN, 200);
+        this.hudSteps = this.label(topPlate, "steps", "", 30, -30, 0, C_BROWN, 200);
+        this.hudProgress = this.label(topPlate, "prog", "", 30, 170, 0, C_BROWN, 200);
+        this.loadLevelSprite(root, "btn_setting", 85, 79, -330, 610, () => this.pauseGame());
 
         // 棋盘（NuonuoGame 自绘，位于屏幕中上部）
         const gameNode = new Node("game");
@@ -158,30 +184,21 @@ export default class NuonuoApp extends Component {
         game.onResult = (r) => this.showResult(r);
         game.play(level);
 
-        // 底部按钮栏：暂停 / 撤销 / 刷新 / 道具 / 重开
-        const bar = this.bar(root, "bottombar", 0, -(SCREEN_H / 2 - BAR_H / 2), SCREEN_W, BAR_H, 77);
-        const labels = ["暂停", "撤销", "刷新", "道具", "重开"];
-        const actions: Array<() => void> = [
-            () => this.pauseGame(),
-            () => this._game.undo(),
-            () => this._game.refresh(),
-            () => this.toast("道具未实现"),
-            () => this._game.restart(),
-        ];
-        const bw = 128, bh = 84, gap = 16;
-        const total = labels.length * bw + (labels.length - 1) * gap;
-        const startX = -total / 2 + bw / 2;
-        for (let i = 0; i < labels.length; i++) {
-            this.btn(bar, `btn_${i}`, labels[i], startX + i * (bw + gap), 0, bw, bh, C_PRIMARY, actions[i]);
-        }
+        // 底部底板（static_bg）：撤销 / 刷新道具按钮
+        const bottomPlate = this.loadPlate(root, 590, 168, 0, -515);
+        this.undoBtnNode = null;
+        this.refreshBtnNode = null;
+        this.undoBtnNode = this.makePropButton(bottomPlate, 'undo', -140, 0);
+        this.refreshBtnNode = this.makePropButton(bottomPlate, 'refresh', 140, 0);
+        this.updatePropButtons();
 
         this.show(root);
     }
 
     private updateHud(h: HudData): void {
         if (this.hudLevel) this.hudLevel.string = `第 ${h.level} 关`;
-        if (this.hudSteps) this.hudSteps.string = `步数 ${h.steps}${h.maxSteps !== null ? `/${h.maxSteps}` : ''}`;
-        if (this.hudProgress) this.hudProgress.string = `进度 ${h.placed}/${h.total}`;
+        if (this.hudSteps) this.hudSteps.string = `步数：${h.steps}${h.maxSteps !== null ? `/${h.maxSteps}` : ''}`;
+        if (this.hudProgress) this.hudProgress.string = `剩余物品：${h.total - h.placed}`;
     }
 
     private pauseGame(): void {
@@ -199,10 +216,167 @@ export default class NuonuoApp extends Component {
 
         this.label(mask, "pauseTxt", "已暂停", 64, 0, 160);
         this.btn(mask, "btn_resume", "继续", 0, -40, 320, 110, C_PRIMARY, () => mask.destroy());
-        this.btn(mask, "btn_back", "返回主页", 0, -180, 320, 90, C_GOLD, () => {
+        this.btn(mask, "btn_restart", "重开", 0, -180, 320, 90, C_BLUE, () => {
+            mask.destroy();
+            this._game.restart();
+        });
+        this.btn(mask, "btn_back", "返回主页", 0, -300, 320, 90, C_GOLD, () => {
             mask.destroy();
             this.showMenu();
         });
+    }
+
+    // ========== 道具系统（撤销/刷新消耗全局道具 + 看广告补道具 + 每日奖励） ==========
+
+    /** 点击撤销：有道具则扣 1 个并撤销；无道具则引导看广告 */
+    private onUndo(): void {
+        if (gameState.undoItems > 0) {
+            if (this._game.undo()) {
+                gameState.useUndoItem();
+                this.updatePropButtons();
+            }
+        } else {
+            this.requestItemByAd('undo');
+        }
+    }
+
+    /** 点击刷新：有道具则扣 1 个并刷新；无道具则引导看广告 */
+    private onRefresh(): void {
+        if (gameState.refreshItems > 0) {
+            gameState.useRefreshItem();
+            this._game.refresh();
+            this.updatePropButtons();
+            this.toast(`已刷新，剩余刷新道具 ${gameState.refreshItems} 个`);
+        } else {
+            this.requestItemByAd('refresh');
+        }
+    }
+
+    /** 看广告获取道具：微信走激励视频广告，非微信环境直接放发（对齐 PlatHelper.playVideo 的约定） */
+    private requestItemByAd(type: 'undo' | 'refresh'): void {
+        const slot = type === 'undo' ? VideoEnum.RewardedVideo.Prop_Undo : VideoEnum.RewardedVideo.Prop_Refresh;
+        PlatHelper.playVideo((success: boolean) => {
+            if (success) {
+                this.grantItemByAd(type);
+            } else {
+                this.toast('未看完广告，未获得道具');
+            }
+        }, slot);
+    }
+
+    /** 广告观看完毕，发放对应道具（撤回+3 / 刷新+1，对齐原版 grantItemByAd） */
+    private grantItemByAd(type: 'undo' | 'refresh'): void {
+        if (type === 'undo') {
+            gameState.addUndoItems(3);
+            this.toast('已获得撤回道具 ×3');
+        } else {
+            gameState.addRefreshItems(1);
+            this.toast('已获得刷新道具 ×1');
+        }
+        this.updatePropButtons();
+    }
+
+    /** 刷新撤销/刷新道具按钮：有道具显示道具图+数量角标，无道具显示广告按钮 */
+    private updatePropButtons(): void {
+        if (this.undoBtnNode && this.undoBtnNode.isValid) {
+            this.applyPropVisual(this.undoBtnNode, gameState.undoItems, 'btn_cancel');
+        }
+        if (this.refreshBtnNode && this.refreshBtnNode.isValid) {
+            this.applyPropVisual(this.refreshBtnNode, gameState.refreshItems, 'btn_refresh');
+        }
+    }
+
+    // ========== 每日登录奖励 ==========
+
+    private todayStr(): string {
+        const d = new Date();
+        const m = d.getMonth() + 1;
+        const day = d.getDate();
+        const pad = (n: number) => (n < 10 ? '0' + n : '' + n);
+        return `${d.getFullYear()}-${pad(m)}-${pad(day)}`;
+    }
+
+    private hasClaimedDaily(): boolean {
+        try {
+            const saved = getStorageAdapter().getItem('nuonuo_daily_reward');
+            if (saved) return JSON.parse(saved).lastClaimDate === this.todayStr();
+        } catch (e) { /* 忽略 */ }
+        return false;
+    }
+
+    /** 每日登录奖励弹窗（对齐源工程：仅「领取奖励」可点击，奖励卡片为纯展示） */
+    private showDailyRewardPopup(): void {
+        const overlay = new Node("dailyReward");
+        overlay.layer = this.node.layer;
+        this.node.addChild(overlay);
+        overlay.setPosition(0, 0, 0);
+        overlay.addComponent(UITransform).setContentSize(SCREEN_W, SCREEN_H);
+        const g = overlay.addComponent(Graphics);
+        g.fillColor = this.makeColor([0, 0, 0], 140); // rgba(0,0,0,0.55)
+        g.rect(-SCREEN_W / 2, -SCREEN_H / 2, SCREEN_W, SCREEN_H);
+        g.fill();
+        overlay.addComponent(BlockInputEvents);
+
+        // 面板（源工程 #1a2c52）
+        const panel = this.panel(overlay, "panel", 0, 0, 640, 680, [26, 44, 82]);
+        this.label(panel, "title", "每日登录奖励", 44, 0, 290);
+        this.label(panel, "sub", "每天登录可领一次", 26, 0, 238, C_SUBTEXT);
+
+        // 奖励卡片：撤回×3 / 刷新×3（纯展示，不可点击）
+        this.rewardCard(panel, -160, 120, 290, 168, "撤回道具", 3);
+        this.rewardCard(panel, 160, 120, 290, 168, "刷新道具", 3);
+
+        // 当前背包数量
+        this.dailyBagLabel = this.label(panel, "bag", `当前背包：撤回 ${gameState.undoItems} ｜ 刷新 ${gameState.refreshItems}`, 22, 0, -84, C_SUBTEXT);
+
+        // 领取奖励（已领 → "已领取"，仍可点击给提示）
+        const claimText = this.hasClaimedDaily() ? '已领取' : '领取奖励';
+        const claimBtn = this.btn(panel, "claim", claimText, 0, -210, 360, 96, C_PRIMARY, () => this.claimDailyReward());
+        this.dailyClaimLabel = claimBtn.getChildByName("Label")?.getComponent(Label);
+
+        // 右上角关闭
+        this.btn(panel, "close", "✕", 290, 300, 56, 56, C_WHITE, () => overlay.destroy(), 64);
+    }
+
+    /** 单张奖励卡片（名称/数量，纯展示，不可点击） */
+    private rewardCard(parent: Node, x: number, y: number, w: number, h: number, name: string, count: number): void {
+        const n = new Node("card");
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.setPosition(x, y, 0);
+        n.addComponent(UITransform).setContentSize(w, h);
+        const g = n.addComponent(Graphics);
+        g.fillColor = this.makeColor([255, 255, 255], 26);   // rgba(255,255,255,0.10)
+        g.roundRect(-w / 2, -h / 2, w, h, 12);
+        g.fill();
+        g.lineWidth = 1;
+        g.strokeColor = this.makeColor([255, 255, 255], 31); // rgba(255,255,255,0.12)
+        g.roundRect(-w / 2, -h / 2, w, h, 12);
+        g.stroke();
+
+        this.label(n, "name", name, 24, 0, 34, C_WHITE);
+        this.label(n, "count", `×${count}`, 40, 0, -34, C_GOLD);
+    }
+
+    private claimDailyReward(): void {
+        if (this.hasClaimedDaily()) {
+            this.toast('明天再来领取奖励吧');
+            return;
+        }
+        try {
+            getStorageAdapter().setItem('nuonuo_daily_reward', JSON.stringify({ lastClaimDate: this.todayStr() }));
+        } catch (e) { /* 忽略 */ }
+        gameState.addUndoItems(3);
+        gameState.addRefreshItems(3);
+        this.toast('领取成功！撤回×3、刷新×3 已到账');
+        this.updatePropButtons();
+        // 移除菜单「每日奖励」按钮上的红点（领取后及时刷新，避免残留）
+        if (this.dailyDot && this.dailyDot.isValid) {
+            this.dailyDot.destroy();
+            this.dailyDot = null;
+        }
+        if (this.dailyClaimLabel && this.dailyClaimLabel.isValid) this.dailyClaimLabel.string = '已领取';
+        if (this.dailyBagLabel && this.dailyBagLabel.isValid) this.dailyBagLabel.string = `当前背包：撤回 ${gameState.undoItems} ｜ 刷新 ${gameState.refreshItems}`;
     }
 
     // ========== 结果弹窗 ==========
@@ -214,30 +388,56 @@ export default class NuonuoApp extends Component {
         overlay.setPosition(0, 0, 0);
         overlay.addComponent(UITransform).setContentSize(SCREEN_W, SCREEN_H);
         const g = overlay.addComponent(Graphics);
-        g.fillColor = this.makeColor([0, 0, 0], 179); // rgba(0,0,0,0.7)
+        g.fillColor = this.makeColor([0, 0, 0], 178); // 约 70% 不透明蒙版（255×0.7≈178）
         g.rect(-SCREEN_W / 2, -SCREEN_H / 2, SCREEN_W, SCREEN_H);
         g.fill();
         overlay.addComponent(BlockInputEvents);
 
-        const win = r.win;
-        this.label(overlay, "title", win ? "通关成功！" : "关卡无法完成", 64, 0, 240, win ? C_GREEN : C_PRIMARY);
-        this.label(overlay, "moves", `共移动 ${r.steps} 次`, 32, 0, 130, C_WHITE);
-        this.label(overlay, "refresh", `刷新 ${gameState.refreshesUsed} 次`, 32, 0, 70, C_WHITE);
+        if (r.win) {
+            // ===== 挑战成功：result 贴图（底板 + 标题 + 继续按钮），三者拉开间距 =====
+            const resultBg = this.loadSprite(overlay, 'result', 'result_bg', 401, 429, 0, 20, null);
+            const titleNode = this.loadSprite(overlay, 'result', 'title', 485, 149, 0, 360, null);
 
-        const primaryText = win ? (r.hasNext ? "下一关" : "通关啦") : "重试";
-        this.btn(overlay, "btn_primary", primaryText, 0, -60, 360, 110, C_PRIMARY, () => {
-            overlay.destroy();
-            if (win && r.hasNext) this.startGame(r.level + 1);
-            else this.startGame(r.level);
-        });
-        this.btn(overlay, "btn_select", "选关", -130, -230, 240, 84, C_WHITE, () => {
-            overlay.destroy();
-            this.showLevelSelect();
-        }, 64);
-        this.btn(overlay, "btn_home", "主页", 130, -230, 240, 84, C_WHITE, () => {
-            overlay.destroy();
-            this.showMenu();
-        }, 77);
+            const continueBtn = this.loadSprite(overlay, 'result', 'btn_continue', 461, 131, 0, -305, null);
+            continueBtn.on(Node.EventType.TOUCH_END, (e: any) => {
+                e.propagationStopped = true;   // 阻止冒泡到「点击空白返回首页」
+                overlay.destroy();
+                if (r.hasNext) this.startGame(r.level + 1);   // 继续游戏 → 下一关
+                else this.showMenu();
+            }, this);
+            this.pressScale(continueBtn);
+
+            // 三个 UI（底板 / 标题）吞掉点击，避免点它们触发「返回首页」（继续按钮已自行 stopPropagation）
+            [resultBg, titleNode].forEach((n) => {
+                n.on(Node.EventType.TOUCH_END, (e: any) => { e.propagationStopped = true; }, this);
+            });
+
+            // 继续按钮下方的提示文本
+            this.label(overlay, 'hint', '点击空白返回首页', 26, 0, -415, C_SUBTEXT);
+
+            // 点击空白返回首页
+            overlay.on(Node.EventType.TOUCH_END, () => {
+                overlay.destroy();
+                this.showMenu();
+            }, this);
+        } else {
+            // ===== 挑战失败：保留原逻辑（文字 + 重试 / 选关 / 主页） =====
+            this.label(overlay, "title", "关卡无法完成", 64, 0, 240, C_PRIMARY);
+            this.label(overlay, "moves", `共移动 ${r.steps} 次`, 32, 0, 130, C_WHITE);
+            this.label(overlay, "refresh", `使用刷新道具 ${gameState.levelRefreshSpent} 个`, 32, 0, 70, C_WHITE);
+            this.btn(overlay, "btn_primary", "重试", 0, -60, 360, 110, C_PRIMARY, () => {
+                overlay.destroy();
+                this.startGame(r.level);
+            });
+            this.btn(overlay, "btn_select", "选关", -130, -230, 240, 84, C_WHITE, () => {
+                overlay.destroy();
+                this.showLevelSelect();
+            }, 64);
+            this.btn(overlay, "btn_home", "主页", 130, -230, 240, 84, C_WHITE, () => {
+                overlay.destroy();
+                this.showMenu();
+            }, 77);
+        }
     }
 
     // ========== UI 构建助手 ==========
@@ -259,15 +459,146 @@ export default class NuonuoApp extends Component {
         return n;
     }
 
-    private bar(parent: Node, name: string, x: number, y: number, w: number, h: number, alpha: number): Node {
+    /** 从 resources/nuonuo/{folder}/{name} 异步加载贴图并显示（给定尺寸/位置，可选点击回调）；加载完成前为空节点（背景有纯色兜底） */
+    private loadSprite(parent: Node, folder: string, name: string, w: number, h: number, x: number, y: number, cb: (() => void) | null): Node {
+        const n = new Node(name);
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.setPosition(x, y, 0);
+        n.addComponent(UITransform).setContentSize(w, h);
+        if (cb) {
+            n.on(Node.EventType.TOUCH_END, () => cb(), this);
+            this.pressScale(n);
+        }
+        resources.load(`nuonuo/${folder}/${name}/texture`, Texture2D, (err, tex) => {
+            if (err || !tex || !n.isValid) return;
+            const sf = new SpriteFrame();
+            sf.texture = tex;
+            const spr = n.addComponent(Sprite);
+            spr.sizeMode = Sprite.SizeMode.CUSTOM;
+            spr.spriteFrame = sf;
+        });
+        return n;
+    }
+
+    /** 菜单页贴图（resources/nuonuo/first/） */
+    private loadFirstSprite(parent: Node, name: string, w: number, h: number, x: number, y: number, cb: (() => void) | null): Node {
+        return this.loadSprite(parent, 'first', name, w, h, x, y, cb);
+    }
+
+    /** 关卡页贴图（resources/nuonuo/level/） */
+    private loadLevelSprite(parent: Node, name: string, w: number, h: number, x: number, y: number, cb: (() => void) | null): Node {
+        return this.loadSprite(parent, 'level', name, w, h, x, y, cb);
+    }
+
+    /** 顶部/底部底板：static_bg 九宫格贴图（SLICED 拉伸，适配任意宽度），未就绪回退透明 */
+    private loadPlate(parent: Node, w: number, h: number, x: number, y: number): Node {
+        const n = new Node("plate");
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.setPosition(x, y, 0);
+        n.addComponent(UITransform).setContentSize(w, h);
+        resources.load('nuonuo/static/static_bg/texture', Texture2D, (err, tex) => {
+            if (err || !tex || !n.isValid) return;
+            const sf = new SpriteFrame();
+            sf.texture = tex;
+            // 九宫格四边（来自 static_bg.png.meta 的 border，贴图直接包 SpriteFrame 不携带，需手动补上）
+            sf.insetLeft = 191;
+            sf.insetRight = 191;
+            sf.insetTop = 64;
+            sf.insetBottom = 64;
+            const spr = n.addComponent(Sprite);
+            spr.sizeMode = Sprite.SizeMode.CUSTOM;
+            spr.type = Sprite.Type.SLICED;
+            spr.spriteFrame = sf;
+        });
+        return n;
+    }
+
+    /** 创建道具按钮容器（撤销/刷新）：固定尺寸+点击+缩放，内容由 applyPropVisual 重绘 */
+    private makePropButton(parent: Node, kind: 'undo' | 'refresh', x: number, y: number): Node {
+        const n = new Node(`btn_${kind}`);
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.setPosition(x, y, 0);
+        n.addComponent(UITransform).setContentSize(120, 123);
+        n.on(Node.EventType.TOUCH_END, kind === 'undo' ? () => this.onUndo() : () => this.onRefresh(), this);
+        this.pressScale(n);
+        return n;
+    }
+
+    /** 重绘道具按钮内容：道具图永远显示；有道具 → 右上角 num_bg 数量角标；无道具 → 广告图标替换该角标（数字隐藏） */
+    private applyPropVisual(node: Node, count: number, propImage: string): void {
+        node.removeAllChildren();
+        this.loadSprite(node, 'level', propImage, 120, 123, 0, 0, null);
+        if (count > 0) {
+            this.numBadge(node, count, 48, 50);
+        } else {
+            this.loadSprite(node, 'static', 'btn_video', 44, 44, 48, 50, null);
+        }
+    }
+
+    /** 在父节点上放一个「圆底(num_bg) + 棕色数字」角标，返回数字 Label 便于刷新计数 */
+    private numBadge(parent: Node, num: number, x: number, y: number): Label {
+        const n = new Node("badge");
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.setPosition(x, y, 0);
+        const size = 44;
+        n.addComponent(UITransform).setContentSize(size, size);
+
+        // 圆底贴图 num_bg（直接用 Sprite；不再画黑色兜底，否则 Graphics 会和 Sprite 同节点冲突导致贴图不显示）
+        resources.load('nuonuo/level/num_bg/texture', Texture2D, (err, tex) => {
+            if (err || !tex || !n.isValid) return;
+            const sf = new SpriteFrame();
+            sf.texture = tex;
+            const spr = n.addComponent(Sprite);
+            spr.sizeMode = Sprite.SizeMode.CUSTOM;
+            spr.spriteFrame = sf;
+        });
+
+        const labNode = new Node("Label");
+        labNode.layer = n.layer;
+        n.addChild(labNode);
+        labNode.addComponent(UITransform).setContentSize(size, size);
+        const lab = labNode.addComponent(Label);
+        lab.string = `${num}`;
+        lab.fontSize = 22;
+        lab.isBold = true;
+        lab.color = this.makeColor(C_BROWN);
+        lab.horizontalAlign = Label.HorizontalAlign.CENTER;
+        lab.verticalAlign = Label.VerticalAlign.CENTER;
+        return lab;
+    }
+
+    /** 圆角面板（可指定底色 + 白色细描边，用于弹窗面板） */
+    private panel(parent: Node, name: string, x: number, y: number, w: number, h: number, rgb: RGB): Node {
         const n = new Node(name);
         n.layer = parent.layer;
         parent.addChild(n);
         n.setPosition(x, y, 0);
         n.addComponent(UITransform).setContentSize(w, h);
         const g = n.addComponent(Graphics);
-        g.fillColor = this.makeColor([0, 0, 0], alpha);
-        g.rect(-w / 2, -h / 2, w, h);
+        g.fillColor = this.makeColor(rgb);
+        g.roundRect(-w / 2, -h / 2, w, h, 16);
+        g.fill();
+        g.lineWidth = 1;
+        g.strokeColor = this.makeColor([255, 255, 255], 31);
+        g.roundRect(-w / 2, -h / 2, w, h, 16);
+        g.stroke();
+        return n;
+    }
+
+    /** 红点标记（未领取提示，画在按钮右上角），返回节点便于领取后移除 */
+    private redDot(parent: Node, x: number, y: number): Node {
+        const n = new Node("dot");
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.setPosition(x, y, 0);
+        n.addComponent(UITransform).setContentSize(20, 20);
+        const g = n.addComponent(Graphics);
+        g.fillColor = new Color(255, 77, 79, 255); // #ff4d4f
+        g.circle(0, 0, 8);
         g.fill();
         return n;
     }
@@ -314,7 +645,23 @@ export default class NuonuoApp extends Component {
         lab.verticalAlign = Label.VerticalAlign.CENTER;
 
         n.on(Node.EventType.TOUCH_END, () => cb(), this);
+        this.pressScale(n);
         return n;
+    }
+
+    /** 给按钮节点绑定「按下缩放」手感（按下缩到 0.9，松手/取消回弹 1.0），所有按钮统一走这里 */
+    private pressScale(n: Node): void {
+        const down = () => {
+            Tween.stopAllByTarget(n);
+            tween(n).to(0.06, { scale: v3(0.9, 0.9, 1) }).start();
+        };
+        const up = () => {
+            Tween.stopAllByTarget(n);
+            tween(n).to(0.1, { scale: v3(1, 1, 1) }).start();
+        };
+        n.on(Node.EventType.TOUCH_START, down, this);
+        n.on(Node.EventType.TOUCH_END, up, this);
+        n.on(Node.EventType.TOUCH_CANCEL, up, this);
     }
 
     private levelCell(parent: Node, lv: number, unlocked: boolean, x: number, y: number, size: number): Node {
@@ -339,6 +686,7 @@ export default class NuonuoApp extends Component {
         lab.color = this.makeColor(unlocked ? C_WHITE : C_SUBTEXT);
         lab.horizontalAlign = Label.HorizontalAlign.CENTER;
         lab.verticalAlign = Label.VerticalAlign.CENTER;
+        this.pressScale(n);
         return n;
     }
 

@@ -11,8 +11,8 @@
 - `assets/scene/main.scene` — 唯一场景：Canvas(768×1344) + mainCamera + Main 组件。
 - `assets/Script/app/NuonuoApp.ts` — 屏幕管理器（框架无关、全运行时代码构建）：`boot()` 进菜单，负责菜单 / 选关 / 关卡 / 结果弹窗的构建与切换。顶部有功能开关 `SELECT_ALLOW_LOCKED`（选关页是否允许点选未解锁关卡）。
 - `assets/Script/common/Main.ts` — 场景入口；`onLoad` 里 `Main.run()` 挂 `NuonuoApp` 并 `boot()`；`mainCamera` getter 供平台层使用。
-- `assets/Script/common/NuonuoBootstrap.ts` — 把 `sys.localStorage` 注入为核心包存储适配器；由 Main 作为**首个 import** 引入。
-- `assets/Script/hall/NuonuoGame.ts` — 挪挪的 Cocos 渲染适配层（棋盘渲染 + 拖拽归位 + 胜负判定；优先 `resources/nuonuo/` 贴图，未就绪回退 Graphics + Label）。框架无关：宿主经 `onHud`/`onResult`/`onTip` 注入回调，公开 `play(level)`/`undo()`/`restart()`。
+- `assets/Script/app/NuonuoBootstrap.ts` — 把 `sys.localStorage` 注入为核心包存储适配器；由 Main 作为**首个 import** 引入。
+- `assets/Script/app/NuonuoGame.ts` — 挪挪的 Cocos 渲染适配层（棋盘渲染 + 拖拽归位 + 胜负判定；优先 `resources/nuonuo/` 贴图，未就绪回退 Graphics + Label）。框架无关：宿主经 `onHud`/`onResult`/`onTip` 注入回调，公开 `play(level)`/`undo()`/`restart()`。
 - `assets/Script/nuonuo/` — 引擎无关核心包（types / config / core / systems / utils，纯 TS、零 `cc` 依赖、相对导入）。
 - `assets/resources/nuonuo/` — 挪挪收纳屋原图（30 张 PNG：`gezi`/`dizuo`/`zhangai`/`xuanzhogn`/`portal1~5`/`item_1~9`/`item_1_1~9_1`/`water`/`snow`/`freeon`）。
 - `assets/Script/util/PlatHelper.ts` + `WeChatPlatHelper.ts` — 微信平台适配（分享 / 广告 / 游戏圈 / 上报 / 震动），已与旧框架解耦。

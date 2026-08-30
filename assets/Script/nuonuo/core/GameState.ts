@@ -15,6 +15,7 @@
 
 import { GameStateData, MoveRecord, GameEvent } from '../types/index';
 import { eventCenter } from './EventCenter';
+import { GameConfig } from '../config/GameConfig';
 import { getStorageAdapter } from './Storage';
 
 export class GameState {
@@ -38,6 +39,11 @@ export class GameState {
       maxRefreshes: 3,
       stepsUsed: 0,
       maxSteps: null,
+      undoItems: GameConfig.INITIAL_ITEMS.undo,
+      refreshItems: GameConfig.INITIAL_ITEMS.refresh,
+      levelRefreshSpent: 0,
+      adStepsUsed: 0,
+      maxAdSteps: 3,
     };
     // 从本地存储加载数据（如果有的话）
     this.loadFromStorage();
@@ -95,6 +101,31 @@ export class GameState {
   get stepsLeft(): number {
     if (this.data.maxSteps === null) return Infinity;
     return Math.max(0, this.data.maxSteps - this.data.stepsUsed);
+  }
+
+  /** 【每日奖励】全局撤回道具数量 */
+  get undoItems(): number { return this.data.undoItems; }
+
+  /** 【每日奖励】全局刷新道具数量 */
+  get refreshItems(): number { return this.data.refreshItems; }
+
+  /** 【每日奖励】本关消耗的刷新道具数（结算统计用） */
+  get levelRefreshSpent(): number { return this.data.levelRefreshSpent; }
+
+  /** 【广告续命】本关已看广告加步数次数 */
+  get adStepsUsed(): number { return this.data.adStepsUsed; }
+
+  /** 【广告续命】本关可看广告加步数上限（默认 3） */
+  get maxAdSteps(): number { return this.data.maxAdSteps; }
+
+  /** 【广告续命】本关剩余可看广告加步数次数 */
+  get adStepsLeft(): number {
+    return Math.max(0, this.data.maxAdSteps - this.data.adStepsUsed);
+  }
+
+  /** 【广告续命】本关是否还能看广告加步数 */
+  get hasAdStepsLeft(): boolean {
+    return this.data.maxSteps !== null && this.adStepsLeft > 0;
   }
 
   // ========== 写入方法 ==========
@@ -178,6 +209,49 @@ export class GameState {
     return this.data.refreshesUsed < this.data.maxRefreshes;
   }
 
+  // ========== 全局道具（每日奖励等来源） ==========
+
+  /** 增加全局撤回道具 */
+  addUndoItems(n: number): void {
+    this.data.undoItems += n;
+    this.saveToStorage();
+  }
+
+  /** 增加全局刷新道具 */
+  addRefreshItems(n: number): void {
+    this.data.refreshItems += n;
+    this.saveToStorage();
+  }
+
+  /** 消耗一个全局撤回道具（成功返回 true） */
+  useUndoItem(): boolean {
+    if (this.data.undoItems <= 0) return false;
+    this.data.undoItems--;
+    this.saveToStorage();
+    return true;
+  }
+
+  /** 消耗一个全局刷新道具（成功返回 true） */
+  useRefreshItem(): boolean {
+    if (this.data.refreshItems <= 0) return false;
+    this.data.refreshItems--;
+    this.data.levelRefreshSpent++; // 统计本关消耗（结算页展示）
+    this.saveToStorage();
+    return true;
+  }
+
+  /** 【广告续命】记录一次看广告加步数（调用前应先判断 hasAdStepsLeft） */
+  recordAdStep(): void {
+    if (this.data.adStepsUsed < this.data.maxAdSteps) {
+      this.data.adStepsUsed++;
+    }
+  }
+
+  /** 【广告续命】设置本关看广告加步数上限（默认 3） */
+  setMaxAdSteps(max: number): void {
+    this.data.maxAdSteps = Math.max(0, max);
+  }
+
   /** 暂停 */
   pause(): void {
     this.data.isPaused = true;
@@ -198,6 +272,11 @@ export class GameState {
     return this.data.moveHistory.pop();
   }
 
+  /** 是否有可撤销的移动历史 */
+  get hasMoveHistory(): boolean {
+    return this.data.moveHistory.length > 0;
+  }
+
   /**
    * 重置关卡相关状态（新关卡开始时调用）
    */
@@ -208,9 +287,12 @@ export class GameState {
     this.data.isPaused = false;
     this.data.moveHistory = [];
     this.data.refreshesUsed = 0;
+    this.data.levelRefreshSpent = 0;
     this.data.maxRefreshes = 3;
     this.data.stepsUsed = 0;
     this.data.maxSteps = null;
+    this.data.adStepsUsed = 0;
+    this.data.maxAdSteps = 3;
   }
 
   // ========== 本地存储 ==========
@@ -226,6 +308,9 @@ export class GameState {
         const parsed = JSON.parse(saved);
         this.data.maxUnlockedLevel = parsed.maxUnlockedLevel ?? 1;
         this.data.soundEnabled = parsed.soundEnabled ?? true;
+        // 存档中无道具字段（新玩家/老版本存档）时，发放初始道具；已有值则尊重存档
+        this.data.undoItems = parsed.undoItems ?? GameConfig.INITIAL_ITEMS.undo;
+        this.data.refreshItems = parsed.refreshItems ?? GameConfig.INITIAL_ITEMS.refresh;
       }
     } catch (e) {
       // 存储不可用时静默失败（如宿主未注入适配器）
@@ -239,6 +324,8 @@ export class GameState {
       getStorageAdapter().setItem('nuonuo_save', JSON.stringify({
         maxUnlockedLevel: this.data.maxUnlockedLevel,
         soundEnabled: this.data.soundEnabled,
+        undoItems: this.data.undoItems,
+        refreshItems: this.data.refreshItems,
       }));
     } catch (e) {
       console.warn('[GameState] 保存存档失败:', e);

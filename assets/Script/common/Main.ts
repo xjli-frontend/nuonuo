@@ -1,4 +1,4 @@
-import './NuonuoBootstrap'; // 必须最先导入：先于任何可能拖入 gameState 的模块注入存储适配器
+import '../app/NuonuoBootstrap'; // 必须最先导入：先于任何可能拖入 gameState 的模块注入存储适配器
 import { _decorator, Camera, Component, find, Game, game, log, Node, UITransform } from 'cc';
 const { ccclass } = _decorator;
 

@@ -151,7 +151,7 @@ export class WeChatPlatHelper {
     }
 
     static curVideoEnum: VideoEnum.RewardedVideo = null;
-    static playVideo(callback: Function, videoEnum: VideoEnum.RewardedVideo = VideoEnum.RewardedVideo.Revive_Time) {
+    static playVideo(callback: Function, videoEnum: VideoEnum.RewardedVideo = VideoEnum.RewardedVideo.Prop_Undo) {
         let self = this;
         self.videoCallback = callback;
         if (videoEnum != this.curVideoEnum) {
@@ -375,14 +375,8 @@ const reportIds = ["BCBgAAoXHx5d1QpzuGCJR1"];
 
 
 const videoIds = [
-    "adunit-27790c1980b36ebb",
-    "adunit-ea1f4d5ea4698881",
-    "adunit-94b1deddc4689650",
-    "adunit-85885df196e097a0",
-    "adunit-6beb292287902fad",
-    "adunit-98f8212883af1898",
-    "adunit-b921c252bea4f926",
-    "adunit-a0b27bcd2add250d"
+    "adunit-27790c1980b36ebb",   // 道具 - 撤回
+    "adunit-ea1f4d5ea4698881",   // 道具 - 刷新
 ]
 
 

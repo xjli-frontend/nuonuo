@@ -171,8 +171,13 @@ export interface GameStateData {
   moveHistory: MoveRecord[]; // 移动历史（用于撤销）
   refreshesUsed: number;    // 当前关卡已用刷新次数
   maxRefreshes: number;     // 当前关卡刷新次数上限
+  levelRefreshSpent: number; // 本关消耗的全局刷新道具数（结算统计用）
   stepsUsed: number;        // 【步数限制】当前关卡已用步数
   maxSteps: number | null;  // 【步数限制】步数上限（null=无限制）
+  undoItems: number;        // 【每日奖励】全局撤回道具数量（跨关卡）
+  refreshItems: number;     // 【每日奖励】全局刷新道具数量（跨关卡）
+  adStepsUsed: number;      // 【广告续命】本关已看广告加步数次数
+  maxAdSteps: number;       // 【广告续命】本关可看广告加步数上限（默认 3）
 }
 
 // ========== 移动记录 ==========

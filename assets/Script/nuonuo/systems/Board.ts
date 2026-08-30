@@ -589,7 +589,7 @@ export class Board {
       if (!exit) return result; // 没有配对传送门
 
       const exitCell = this.getCell(exit[0], exit[1]);
-      // 出口必须可达（不能是物品或障碍物）
+      // 配对出口必须可达（不能是物品或障碍物）
       if (!exitCell || exitCell.type === CellType.ITEM || this.isObstacle(exit[0], exit[1])) {
         return result; // 出口被堵，传送失败
       }
@@ -597,6 +597,25 @@ export class Board {
       // 检查使用次数（undefined = 无限）
       if (toCell.portalUses !== undefined && toCell.portalUses <= 0) {
         return result; // 传送门已用完
+      }
+
+      // 【v0.8.7】方向感知传送：物品沿行进方向从配对传送门"钻出"到出口外侧的空格。
+      // 进入方向 = 起始格相对入口传送门的方向（物品直线滑动，方向即行进方向）。
+      const dirRow = Math.sign(toRow - fromRow);
+      const dirCol = Math.sign(toCol - fromCol);
+      // 出口落点 = 配对传送门 B 沿行进方向再走一格（镜像反转：从 A 上边进 → 从 B 下边出）
+      const landRow = exit[0] + dirRow;
+      const landCol = exit[1] + dirCol;
+      const landCell = this.getCell(landRow, landCol);
+      // 【v0.8.8/B】落点 = 可合法放置物品的格子（EMPTY/TARGET/WATER/ONEWAY/BUTTON/激活的活动墙·桥），
+      // 含目标格（传送后可直接归位消除）；但排除：被物品占、障碍/未激活墙·桥、越界、以及任何传送门（避免无限传送）。
+      const isLandingValid =
+        !!landCell &&
+        !this.isObstacle(landRow, landCol) &&
+        isReachableDest(landCell.type) &&
+        landCell.type !== CellType.PORTAL;
+      if (!landCell || !isLandingValid) {
+        return result; // 出口方向落点不可用，传送失败（物品回弹入口原位）
       }
 
       // 扣减使用次数
@@ -608,10 +627,10 @@ export class Board {
         }
       }
 
-      // 实际目的地改为传送门出口
-      actualToRow = exit[0];
-      actualToCol = exit[1];
-      toCell = exitCell;
+      // 实际目的地改为出口外侧的空格
+      actualToRow = landRow;
+      actualToCol = landCol;
+      toCell = landCell;
       result.teleported = true;
       result.finalRow = actualToRow;
       result.finalCol = actualToCol;
