@@ -51,6 +51,8 @@ export class PlatHelper {
     }
 
     static playVideo(callback: Function, videoEnum: VideoEnum.RewardedVideo) {
+        callback && callback(true);
+        return;
         if (this.isWX) {
             this.reportUserBehaviorBranchAnalytics(ReportEnum.RewardedVideo, 2, videoEnum);
             WeChatPlatHelper.playVideo((completed: boolean | number) => {
@@ -122,6 +124,7 @@ export class PlatHelper {
 
     static reportUserBehaviorBranchAnalytics(reportEnum: ReportEnum, eventType: number, videoEnum: VideoEnum.RewardedVideo) {
         if (this.isWX) {
+            return;
             WeChatPlatHelper.reportUserBehaviorBranchAnalytics(reportEnum, eventType, videoEnum);
         }
     }

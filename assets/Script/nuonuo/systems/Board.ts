@@ -13,6 +13,7 @@
  */
 
 import { CellData, CellType, ItemType, LevelConfig } from '../types/index';
+import { GameConfig } from '../config/GameConfig';
 
 /** moveItem 的返回结果 */
 export interface MoveResult {
@@ -577,7 +578,11 @@ export class Board {
       t === CellType.EMPTY || t === CellType.TARGET || t === CellType.PORTAL
       || t === CellType.WATER || t === CellType.ONEWAY || t === CellType.BUTTON
       || ((t === CellType.ACTIVE_WALL || t === CellType.ACTIVE_BRIDGE));
-    if (!toCell || !isReachableDest(toCell.type)) return result;
+    // 【v0.8.9/A】已有物品的格子：仅当堆叠未满 MAX_STACK_LAYERS 时可作为目的地
+    // （撤销放回堆叠格；普通拖拽已被 PathCalculator 过滤，玩家不会直接落到物品格上）
+    const isStackableDest =
+      !!toCell && toCell.type === CellType.ITEM && (toCell.stack?.length ?? 1) < GameConfig.MAX_STACK_LAYERS;
+    if (!toCell || (!isReachableDest(toCell.type) && !isStackableDest)) return result;
 
     // ========== 传送门处理 ==========
     // 如果目标是传送门，找到配对传送门作为实际目的地
@@ -608,11 +613,14 @@ export class Board {
       const landCol = exit[1] + dirCol;
       const landCell = this.getCell(landRow, landCol);
       // 【v0.8.8/B】落点 = 可合法放置物品的格子（EMPTY/TARGET/WATER/ONEWAY/BUTTON/激活的活动墙·桥），
-      // 含目标格（传送后可直接归位消除）；但排除：被物品占、障碍/未激活墙·桥、越界、以及任何传送门（避免无限传送）。
+      // 含目标格（传送后可直接归位消除）；但排除：障碍/未激活墙·桥、越界、以及任何传送门（避免无限传送）。
+      // 【v0.8.9/A】出口落点若已有物品且堆叠未满 MAX_STACK_LAYERS，允许直接堆叠上去（方案 A：传送门出口堆叠特例）
+      const isLandingStackable =
+        landCell?.type === CellType.ITEM && (landCell.stack?.length ?? 1) < GameConfig.MAX_STACK_LAYERS;
       const isLandingValid =
         !!landCell &&
         !this.isObstacle(landRow, landCol) &&
-        isReachableDest(landCell.type) &&
+        (isReachableDest(landCell.type) || isLandingStackable) &&
         landCell.type !== CellType.PORTAL;
       if (!landCell || !isLandingValid) {
         return result; // 出口方向落点不可用，传送失败（物品回弹入口原位）
@@ -685,10 +693,18 @@ export class Board {
       // targetType 保持不变
     } else {
       // 非归位：物品留在目标格上（类型不匹配，或落到空格/传送门出口空格/按钮/活动墙·桥）
+      // 【v0.8.9/A】传送门出口堆叠：若落点原本已是物品格，保留原堆叠，新物品作为顶层压入，原各层下移一层
+      const existingStack =
+        toCell.type === CellType.ITEM
+          ? (toCell.stack ?? [{ type: toCell.itemType!, layer: toCell.layer ?? 1 }])
+          : [];
       toCell.type = CellType.ITEM;
       toCell.itemType = itemType;
       toCell.layer = 1; // 移过去后变为顶层
-      toCell.stack = [{ type: itemType, layer: 1 }];
+      toCell.stack = [
+        { type: itemType, layer: 1 },
+        ...existingStack.map(s => ({ type: s.type, layer: s.layer + 1 })),
+      ];
       toCell.portalId = toPortalId;
       toCell.portalUses = toPortalUses;
       toCell.freezeCounter = toFreezeCounter;

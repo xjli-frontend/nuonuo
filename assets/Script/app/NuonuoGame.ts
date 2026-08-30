@@ -425,6 +425,18 @@ export default class NuonuoGame extends Component {
         this.addCellText(node, ITEM_NAMES[cell.targetType] ?? '?', cs, C_BROWN);
     }
 
+    /** 目标剪影覆盖层（子节点）：被物品压住的目标格用，垫在物品层之下、gezi 之上 */
+    private fillGhost(parent: Node, targetType: ItemType, x: number, y: number, w: number, rad: number, cs: number): void {
+        const n = new Node("ghost");
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.addComponent(UITransform).setContentSize(cs, cs);
+        const g2 = n.addComponent(Graphics);
+        this.fillRect(g2, C_EMPTY, x, y, w, rad);
+        this.drawTargetBorder(g2, x, y, w, rad);
+        this.drawGhost(g2, targetType, x, y, w);
+    }
+
     /** 物品：gezi 底（renderCell 统一铺）+ 按 stack 从下到上绘制阶梯堆叠（dizuo 底座 + item_N 图标），或程序化色卡回退 */
     private renderItem(node: Node, g: Graphics, cell: CellData, r: number, c: number, cs: number, x: number, y: number, w: number, rad: number): void {
         const stack = (cell.stack && cell.stack.length) ? cell.stack : [{ type: cell.itemType!, layer: cell.layer ?? 1 }];
@@ -434,6 +446,16 @@ export default class NuonuoGame extends Component {
         const visibleCount = isDragSource ? stack.length - 1 : stack.length;
         // 整体垂直居中：阶梯向下的总高度 = (visibleCount-1)*stackOffset，居中使其关于格心对称
         const centering = (visibleCount - 1) * stackOffset / 2;
+
+        // 【v0.8.9/B】被物品压住的目标格（未归位）：先画目标剪影铺满整格（垫在物品层之下），
+        // 物品底座留边（max(4px, cs*8%)），四周露出剪影虚线框边缘，提示玩家下方有目标格
+        if (cell.targetType) {
+            const gid = ITEM_ID[cell.targetType];
+            const gkey = gid ? `item_${gid}_1` : null;
+            if (!(gkey && this.trySprite(node, gkey, cs))) {
+                this.fillGhost(node, cell.targetType, x, y, w, rad, cs);
+            }
+        }
 
         // 从最下层画到最上层：下层向下偏移 + 降透明度，形成向下阶梯堆叠（整体居中于格子，下层往下露）
         for (let i = stack.length - 1; i >= 0; i--) {
@@ -616,11 +638,17 @@ export default class NuonuoGame extends Component {
     /** 按源格物品构建浮动预览节点（复用美术贴图，未就绪回退色卡） */
     private buildItemPreview(cs: number): Node {
         const cell = this.board.getCell(this.dragFrom[0], this.dragFrom[1]);
-        const n = new Node("dragPreview");
+        const n = this.buildItemVisual(cell.itemType, cs);
+        n.name = "dragPreview";
+        return n;
+    }
+
+    /** 构建物品视觉节点（dizuo 底座 + item_N 图标，未就绪回退色卡），原点在格心，供拖拽预览 / 特效复用 */
+    private buildItemVisual(itemType: ItemType, cs: number): Node {
+        const n = new Node("itemVisual");
         n.layer = this.node.layer;
         n.addComponent(UITransform).setContentSize(cs, cs);
 
-        const itemType = cell.itemType;
         const id = ITEM_ID[itemType];
         const dizuo = id ? NuonuoGame._sfCache.get('dizuo') : null;
         const itemSf = id ? NuonuoGame._sfCache.get(`item_${id}`) : null;
@@ -665,6 +693,12 @@ export default class NuonuoGame extends Component {
         this.board.tickWaters();
         this.board.recalcButtons();
 
+        // 传送门特效：入口吸入（大变小）→ 出口沿行进方向滑出（小变大），动画结束后再重绘与结算
+        if (res.teleported && itemType !== undefined) {
+            this.playTeleportEffect(tr, tc, res.finalRow, res.finalCol, itemType);
+            return true;
+        }
+
         // 归位（消除）：落点格子变为 TARGET → 播放旋转缩小消失特效
         const placed = this.board.getCell(res.finalRow, res.finalCol)?.type === CellType.TARGET;
         if (placed && itemType !== undefined) {
@@ -691,37 +725,57 @@ export default class NuonuoGame extends Component {
     private playEliminateEffect(row: number, col: number, itemType: ItemType): void {
         const cs = this.cellSize;
         const [x, y] = this.gridToBoardPos(row, col);
-        const n = new Node("fx_eliminate");
-        n.layer = this.node.layer;
+        const n = this.buildItemVisual(itemType, cs);
+        n.name = "fx_eliminate";
         this.node.addChild(n);
         n.setPosition(x, y, 0);
-        n.addComponent(UITransform).setContentSize(cs, cs);
-
-        // 物品图标（复用美术贴图，未就绪回退色卡）
-        const id = ITEM_ID[itemType];
-        const dizuo = id ? NuonuoGame._sfCache.get('dizuo') : null;
-        const itemSf = id ? NuonuoGame._sfCache.get(`item_${id}`) : null;
-        if (dizuo && itemSf) {
-            const pad = Math.max(4, cs * 0.08);
-            this.addSprite(n, dizuo, cs, pad);
-            const iconInset = pad + (cs - pad * 2) * 0.15;
-            this.addSprite(n, itemSf, cs, iconInset);
-        } else {
-            const g = n.addComponent(Graphics);
-            const rgb = ITEM_COLORS[itemType] || [200, 200, 200];
-            const rad = Math.max(4, cs * 0.12);
-            g.fillColor = new Color(245, 232, 208, 255);
-            g.roundRect(-cs / 2 + 2, -cs / 2 + 2, cs - 4, cs - 4, rad);
-            g.fill();
-            const pad = cs * 0.14;
-            g.fillColor = new Color(rgb[0], rgb[1], rgb[2], 255);
-            g.roundRect(-cs / 2 + pad, -cs / 2 + pad, cs - pad * 2, cs - pad * 2, rad * 0.8);
-            g.fill();
-        }
 
         tween(n)
             .to(0.35, { angle: 360, scale: v3(0, 0, 1) }, { easing: 'quadIn' })
             .call(() => n.destroy())
+            .start();
+    }
+
+    /**
+     * 传送特效：入口吸入（大变小）→ 出口沿行进方向滑出（小变大）→ 动画结束重绘 + 结算。
+     * 期间不重绘棋盘，物品在源格/落点都不可见，避免与特效节点重叠穿帮。
+     */
+    private playTeleportEffect(entranceRow: number, entranceCol: number, landRow: number, landCol: number, itemType: ItemType): void {
+        const cs = this.cellSize;
+        const [ix, iy] = this.gridToBoardPos(entranceRow, entranceCol);
+        const [lx, ly] = this.gridToBoardPos(landRow, landCol);
+        // 出口 = 配对传送门；落点是出口沿行进方向再走一格，从出口中心滑到落点中心
+        const exit = this.board.getPortalExit(entranceRow, entranceCol);
+        const [ex, ey] = exit ? this.gridToBoardPos(exit[0], exit[1]) : [lx, ly];
+
+        // 第一阶段：入口吸入——物品在入口传送门缩到 0
+        const suck = this.buildItemVisual(itemType, cs);
+        this.node.addChild(suck);
+        suck.setPosition(ix, iy, 0);
+
+        // 第二阶段：出口传出——物品从出口滑到落点，同时由小变大
+        const pop = this.buildItemVisual(itemType, cs);
+        this.node.addChild(pop);
+        pop.setPosition(ex, ey, 0);
+        pop.setScale(v3(0.05, 0.05, 1));
+
+        tween(suck)
+            .to(0.12, { scale: v3(0.05, 0.05, 1) }, { easing: 'quadIn' })
+            .call(() => {
+                suck.destroy();
+                tween(pop)
+                    .to(0.18, { position: v3(lx, ly, 0), scale: v3(1, 1, 1) }, { easing: 'quadOut' })
+                    .call(() => {
+                        pop.destroy();
+                        // 动画结束：重绘最终状态；若落点是归位格，接消除特效
+                        this.render();
+                        if (this.board.getCell(landRow, landCol)?.type === CellType.TARGET) {
+                            this.playEliminateEffect(landRow, landCol, itemType);
+                        }
+                        this.checkEnd();
+                    })
+                    .start();
+            })
             .start();
     }
 
