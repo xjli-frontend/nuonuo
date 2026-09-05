@@ -1,7 +1,6 @@
 import { Node, size, UITransform, v3, view } from "cc";
 import { VideoEnum } from "../enum/VideoEnum";
 import { PostMessageObj, ShareType } from "../enum/GameEnum";
-import Main from "../common/Main";
 import { ReportEnum } from "../enum/ReportEnum";
 // 声明wx类型
 declare const wx: any;
@@ -16,21 +15,15 @@ export class WeChatPlatHelper {
 
     static calcPosSize(targetNode: Node) {
         let targetWp = targetNode.getComponent(UITransform).convertToWorldSpaceAR(v3(0, 0, 0));
-        let targetSpace = Main.mainCamera.getComponent(UITransform).convertToNodeSpaceAR(targetWp);
         const imgsize = this.getSize(targetNode);
-        var x = targetWp.x;
-        var y = targetWp.y;
         const windowSize = view.getVisibleSize();
         const sysInfo = wx.getSystemInfoSync();
         const radio = sysInfo.windowWidth / windowSize.width;
-        const leftPos = (windowSize.width - x) * radio - imgsize.width / 2;
-        const topPos = (windowSize.height - y) * radio - imgsize.height / 2;
-
-        // console.log("分辨率倍数 ： ", view.getScaleY());
-        // console.log("小程序提供的屏幕范围 ", sysInfo.windowWidth, sysInfo.windowHeight)
-        // console.log("引擎提供的屏幕范围 ", windowSize.width, windowSize.height)
-        // console.log("设备像素比 ", sysInfo.pixelRatio)
-        console.log("leftPos ", leftPos, "topPos ", topPos, "imgsize", imgsize)
+        // 本工程世界坐标为可见区左下角原点、y 向上（运行时日志实测：排行榜按钮 -266,-320
+        // → world 109,491.5 = 可见区半宽/半高 ± 局部坐标）；微信原生按钮 style 的 left/top
+        // 以屏幕左上角为原点（逻辑像素），所以 x 直接乘比例、y 用屏高减掉
+        const leftPos = targetWp.x * radio - imgsize.width / 2;
+        const topPos = sysInfo.windowHeight - targetWp.y * radio - imgsize.height / 2;
         return { leftPos: leftPos, topPos: topPos, imgsize }
     }
 
@@ -49,32 +42,39 @@ export class WeChatPlatHelper {
      *  创建游戏圈按钮
      * @param chil 节点位置
      * @param imgsize 图片大小
-     * @param isshow 是否隐藏   true  隐藏   false 不隐藏
-     * @returns 
+     * @param isshow 是否显示   true  显示   false 隐藏
+     * @returns
      */
     public static createGameClubButton(targetNode: Node, isshow) {
+        const { leftPos, topPos, imgsize } = this.calcPosSize(targetNode);
         if (!this._clubButton) {
-            const { leftPos, topPos, imgsize } = this.calcPosSize(targetNode);
             this._clubButton = wx.createGameClubButton({
                 type: 'text',
                 // icon: 'light',
                 style: {
                     left: leftPos,// 之所以要减20，是因为clubButton的锚点在左上角
-                    top: topPos, // 之所以要减20，是因为clubButton的锚点在左上角 
+                    top: topPos, // 之所以要减20，是因为clubButton的锚点在左上角
                     width: imgsize.width,
                     height: imgsize.height,
-                    backgroundColor: "#FF0000"
+                    backgroundColor: "#00000000"   // 透明：纯触摸层，排行榜按钮的图正常透出
                 },
                 text: "",
             });
+        } else {
+            // 单例已存在（如 devtools 未刷新页面就重跑了游戏，旧会话的按钮还在）：
+            // 用当前目标节点的位置刷新它，避免沿用旧位置
+            this._clubButton.style.left = leftPos;
+            this._clubButton.style.top = topPos;
+            this._clubButton.style.width = imgsize.width;
+            this._clubButton.style.height = imgsize.height;
         }
         this.GameClubButtonShowHide(isshow);
     }
 
     /**
     *  显示或隐藏游戏圈按钮
-    * @param isshow 是否隐藏   true  隐藏   false 不隐藏
-    * @returns 
+    * @param isshow 是否显示   true  显示   false 隐藏
+    * @returns
     */
     public static GameClubButtonShowHide(isshow) {
         if (this._clubButton) {

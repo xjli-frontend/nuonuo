@@ -28,3 +28,4 @@
 - 地形 / 物品有美术资源：`NuonuoGame.preloadAssets()` 预加载到静态 `_sfCache`，`renderCell` 优先贴图、未就绪回退 Graphics 程序化绘制。美术映射：障碍→`zhangai`、空格/物品底→`gezi`、目标→`item_N_1` 剪影、传送门→`portal_N`、物品→`dizuo`+`item_N`（选中垫 `xuanzhogn`）、水洼→`water`、冰块→`freeon`、冻结物品→`snow` 雪花标记；单向门 / 按钮 / 活动墙桥 / 落点高亮仍纯程序化。
 - 物品 9 种（`ItemType`），配色 / 单字名在 `NuonuoGame.ts` 顶部的 `ITEM_COLORS` / `ITEM_NAMES`，`ITEM_ID` 映射 `ItemType → 1~9`（对应 `item_N.png`）。
 - `NuonuoGame` 是框架无关模块（只依赖 `cc` 与 `nuonuo/` 核心包）：胜负 / 提示走 `onResult` / `onTip` 回调注入，HUD 走 `onHud`。改它时不要重新引入 `gui` / `ComponentExtends` / `Utils` 依赖；需要弹窗 / 飘字就在 `NuonuoApp` 里注入。
+- 节点世界坐标是**可见区左下角原点、y 向上**（Canvas 挂在 mainCamera 前、`alignCanvasWithScreen` 把 Canvas 移到可见区中心 (半宽, 半高)，mainCamera 是 Canvas 子节点）。微信原生覆盖层（游戏圈按钮）style 的 left/top 以屏幕**左上角**为原点：`left = world.x * radio`、`top = windowHeight - world.y * radio`（再减半宽/半高），radio = windowWidth / view.getVisibleSize().width。

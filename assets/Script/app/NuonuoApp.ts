@@ -107,7 +107,7 @@ export default class NuonuoApp extends Component {
         this.loadFullBgSprite(root, 'first', 'first_bg');
 
         // 同一行三按钮：排行榜(左) · 开始(中) · 每日奖励(右)
-        this.loadFirstSprite(root, "btn_rank", 139, 123, -266, -320, () => this.openRank());
+        const rankBtn = this.loadFirstSprite(root, "btn_rank", 139, 123, -266, -320, () => this.openRank());
         // 开始 = 续玩：从 maxUnlockedLevel 继续（通关自动 +1；选关点选会直接设为所选关卡）
         this.loadFirstSprite(root, "btn_start", 321, 125, 0, -320, () => this.startGame(gameState.maxUnlockedLevel));
 
@@ -122,6 +122,10 @@ export default class NuonuoApp extends Component {
         }
 
         this.show(root);
+
+        // 微信小游戏：在排行榜按钮位置盖官方「游戏圈」原生按钮（非微信平台空操作）；
+        // 按钮是单例，重复调用只重显；进关卡/选关时由对应屏幕隐藏
+        PlatHelper.createGameClubButton(rankBtn, true);
     }
 
     /** 排行榜入口（占位空方法，后续接入开放数据域） */
@@ -132,6 +136,7 @@ export default class NuonuoApp extends Component {
     // ========== 选关页 ==========
 
     private showLevelSelect(): void {
+        PlatHelper.GameClubButtonShowHide(false);   // 隐藏菜单页的游戏圈原生按钮
         const root = this.newScreen("levelSelect");
         this.fullBg(root, C_MENU_BG);
         this.label(root, "title", "选择关卡", 56, 0, 600);
@@ -172,6 +177,7 @@ export default class NuonuoApp extends Component {
     // ========== 关卡页 ==========
 
     private startGame(level: number): void {
+        PlatHelper.GameClubButtonShowHide(false);   // 隐藏菜单页的游戏圈原生按钮（会盖在棋盘上）
         const root = this.newScreen("game");
 
         // 背景：先铺兜底色，再异步加载 level_bg.jpg 覆盖（未就绪回退纯色）
@@ -320,6 +326,8 @@ export default class NuonuoApp extends Component {
 
     /** 每日登录奖励弹窗（对齐源工程：仅「领取奖励」可点击，奖励卡片为纯展示） */
     private showDailyRewardPopup(): void {
+        // 弹窗叠在菜单上，原生游戏圈按钮仍可点（BlockInputEvents 挡不住原生层），先隐藏
+        PlatHelper.GameClubButtonShowHide(false);
         const overlay = new Node("dailyReward");
         overlay.layer = this.node.layer;
         this.node.addChild(overlay);
@@ -349,8 +357,11 @@ export default class NuonuoApp extends Component {
         const claimBtn = this.btn(panel, "claim", claimText, 0, -210, 360, 96, C_PRIMARY, () => this.claimDailyReward());
         this.dailyClaimLabel = claimBtn.getChildByName("Label")?.getComponent(Label);
 
-        // 右上角关闭
-        this.btn(panel, "close", "✕", 290, 300, 56, 56, C_WHITE, () => overlay.destroy(), 64);
+        // 右上角关闭（关弹窗回到菜单，恢复显示游戏圈按钮）
+        this.btn(panel, "close", "✕", 290, 300, 56, 56, C_WHITE, () => {
+            overlay.destroy();
+            PlatHelper.GameClubButtonShowHide(true);
+        }, 64);
     }
 
     /** 单张奖励卡片（名称/数量，纯展示，不可点击） */
