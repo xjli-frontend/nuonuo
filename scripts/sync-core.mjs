@@ -126,9 +126,9 @@ function adaptGameState(src) {
     }
     const methods = [
       '',
-      '  /** 【选关流程】直接把解锁进度设为指定关卡（选关页点选即存，重进游戏从这关续玩；通关进度仍走 unlockLevel 递增） */',
+      '  /** 【选关流程】把解锁进度设为指定关卡；只增不减（重玩低关卡不拉低进度；重进游戏从最高解锁关续玩） */',
       '  setUnlockedLevel(level: number): void {',
-      '    if (level >= 1 && level !== this.data.maxUnlockedLevel) {',
+      '    if (level > this.data.maxUnlockedLevel) {',
       '      this.data.maxUnlockedLevel = level;',
       '      this.saveToStorage();',
       '    }',

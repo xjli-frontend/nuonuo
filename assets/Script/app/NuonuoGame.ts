@@ -1113,7 +1113,10 @@ export default class NuonuoGame extends Component {
     private onWin(): void {
         this.onSfx?.('win');
         this.onVibrate?.('long');
-        gameState.unlockLevel(this.level + 1);
+        // 最后一关通关：不再往前解锁，进度停留在最后一关（菜单「开始」永远进最后一关）
+        if (getLevelConfig(this.level + 1)) {
+            gameState.unlockLevel(this.level + 1);
+        }
         this.onResult?.({
             win: true,
             level: this.level,

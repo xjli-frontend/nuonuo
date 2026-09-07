@@ -116,8 +116,8 @@ export default class NuonuoApp extends Component {
 
         // 同一行三按钮：排行榜(左) · 开始(中) · 每日奖励(右)
         const rankBtn = this.loadFirstSprite(root, "btn_rank", 139, 123, -266, -320, () => this.openRank());
-        // 开始 = 续玩：从 maxUnlockedLevel 继续（通关自动 +1；选关点选会直接设为所选关卡）
-        this.loadFirstSprite(root, "btn_start", 321, 125, 0, -320, () => this.startGame(gameState.maxUnlockedLevel));
+        // 开始 = 续玩：从 maxUnlockedLevel 继续；清完全部关卡后永远停在最后一关
+        this.loadFirstSprite(root, "btn_start", 321, 125, 0, -320, () => this.startGame(Math.min(gameState.maxUnlockedLevel, TOTAL_LEVELS)));
 
         // 每日登录奖励入口（btn_login_award.png）+ 未领取红点
         this.dailyDot = null;
