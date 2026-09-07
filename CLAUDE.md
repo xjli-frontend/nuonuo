@@ -17,7 +17,7 @@
 - `assets/resources/audio/` — 源工程 `dist/audio/` 复制来的 20 个 mp3（`bgm_theme` + 19 个 `sfx_*`，文件名即 SoundManager 加载键；Cocos 打开编辑器时自动生成 .meta）。
 - `assets/Script/nuonuo/` — 引擎无关核心包（types / config / core / systems / utils，纯 TS、零 `cc` 依赖、相对导入）。
 - `scripts/sync-core.mjs` — 与源工程（`../挪挪收纳屋/src`，可用 `NUONUO_SRC` 覆盖）同步核心逻辑：不带参数只对比，`--apply` 真正写入。白名单=纯逻辑文件；transform 自动完成适配（Storage 注入、剥离 AudioManager、注入 `reload()`/`setUnlockedLevel()`、删除 screenToCanvas）。源工程更新后直接跑 `node scripts/sync-core.mjs --apply` 即可。
-- `assets/resources/nuonuo/` — 挪挪收纳屋原图（31 张 PNG：`gezi`/`dizuo`/`zhangai`/`arr`/`xuanzhogn`/`portal1~5`/`item_1~9`/`item_1_1~9_1`/`water`/`snow`/`freeon`）。`level/` 子目录放按钮类 UI 图（`btn_cancel`/`btn_refresh`/`btn_hammer`/`btn_setting`/`boad_bg`/`num_bg`/`level_bg`，其中 `btn_hammer` 破冰锤为新画）。
+- `assets/resources/nuonuo/` — 挪挪收纳屋原图（30 张 PNG：`gezi`/`dizuo`/`zhangai`/`arr`/`xuanzhogn`/`portal1~5`/`item_1~9`/`item_1_1~9_1`/`snow`/`freeon`，`water.png` 已删除——水洼机制保留但不铺水贴图）。`level/` 子目录放按钮类 UI 图（`btn_cancel`/`btn_refresh`/`btn_hammer`/`btn_setting`/`boad_bg`/`num_bg`/`level_bg`，其中 `btn_hammer` 破冰锤为新画；`level_bg_blur` 是 `level_bg` 的高斯模糊版（离线 box blur 生成），关卡背景用毛玻璃效果）。
 - `assets/Script/util/PlatHelper.ts` + `WeChatPlatHelper.ts` — 微信平台适配（分享 / 广告 / 游戏圈 / 上报 / 震动），已与旧框架解耦。
 - `assets/Script/enum/` — `GameEnum` / `VideoEnum` / `ReportEnum`（平台层用）。
 
@@ -28,7 +28,7 @@
 - `Board.clone()` 是浅拷贝（共享 `stack` 引用）；快照式撤销用 `Board.snapshot()` / `restore()`（内部 `cloneCell` 深拷贝 `stack`），适配层自己的撤销历史走 `JSON.stringify` 深拷贝即可。
 - 归位判定由 `Board.moveItem` 内部完成（匹配目标 → `placedCount++`），适配层只需扫描 `targetPositions` 统计，不要自己判断 placing。
 - 步数 / 归位计数由适配层自管（核心包无对减 API）；`maxUnlockedLevel` 即续玩进度：通关 `unlockLevel` +1、选关 `setUnlockedLevel` 直接设置，均即时落盘。菜单「开始」= `maxUnlockedLevel`。
-- 地形 / 物品有美术资源：`NuonuoGame.preloadAssets()` 预加载到静态 `_sfCache`，`renderCell` 优先贴图、未就绪回退 Graphics 程序化绘制。美术映射：障碍→`zhangai`、空格/物品底→`gezi`、目标→`item_N_1` 剪影、传送门→`portal_N`、物品→`dizuo`+`item_N`（选中垫 `xuanzhogn`）、单向门→`zhangai` 底 + 绿色 `arr` 箭头（默认指左，按方向旋转）、水洼→不铺水贴图，仅左上角 `snow` 雪花 + 红字倒计时（`water` 已移除）、冰块→`freeon`、冻结物品→`snow` 雪花标记；按钮 / 活动墙桥 / 落点高亮仍纯程序化。道具按钮（撤销/刷新/破冰锤）由 NuonuoApp `loadSprite` 走 `level/btn_cancel`/`btn_refresh`/`btn_hammer`，无占位符。
+- 地形 / 物品有美术资源：`NuonuoGame.preloadAssets()` 预加载到静态 `_sfCache`，`renderCell` 优先贴图、未就绪回退 Graphics 程序化绘制。美术映射：障碍→`zhangai`、空格/物品底→`gezi`、目标→`item_N_1` 剪影、传送门→`portal_N`、物品→`dizuo`+`item_N`（选中垫 `xuanzhogn`）、单向门→`zhangai` 底 + 绿色 `arr` 箭头（默认指左，按方向旋转）、水洼→不铺水贴图，仅左上角 `snow` 雪花 + 红字倒计时（`water` 已移除）、冰块→`freeon`、冻结物品→`snow` 雪花标记；按钮 / 活动墙桥 / 落点高亮仍纯程序化。道具按钮（撤销/刷新/破冰锤）由 NuonuoApp `loadSprite` 走 `level/btn_cancel`/`btn_refresh`/`btn_hammer`，无占位符。关卡背景用 `level_bg_blur`（毛玻璃模糊版，未就绪回退 `level_bg`）+ 半透明黑色蒙版（`LEVEL_BG_MASK_ALPHA`）压暗，降低背景视觉干扰。
 - 物品 9 种（`ItemType`），配色 / 单字名在 `NuonuoGame.ts` 顶部的 `ITEM_COLORS` / `ITEM_NAMES`，`ITEM_ID` 映射 `ItemType → 1~9`（对应 `item_N.png`）。
 - `NuonuoGame` 是框架无关模块（只依赖 `cc` 与 `nuonuo/` 核心包）：胜负 / 提示走 `onResult` / `onTip` 回调注入，HUD 走 `onHud`，音效 / 震动走 `onSfx(name)` / `onVibrate('short'|'long')`（名称对齐源工程 AudioManager；宿主接 SoundManager / PlatHelper）。改它时不要重新引入 `gui` / `ComponentExtends` / `Utils` 依赖；需要弹窗 / 飘字就在 `NuonuoApp` 里注入。
 - 音频 / 震动链路：NuonuoGame 只在游戏事件点发 `onSfx`/`onVibrate`（pick/drop/invalid/match/teleport/ice/switch/step_low/undo/refresh/win/fail/level_start + 归位短震/通关长震）；菜单、按钮、弹窗、道具、广告的音效由 NuonuoApp 直接播（ui_tap/ui_popup/reward/ad_reward/toggle_on/toggle_off）。`PlatHelper.vibrateShort()/vibrateLong()` 内部检查 `gameState.vibrationEnabled`（WeChatPlatHelper 只做微信 API 调用，不读开关）。

@@ -34,6 +34,9 @@ const C_SUBTEXT: RGB = [170, 180, 200];     // 副标题/次级文字
 const C_WHITE: RGB = [255, 255, 255];
 const C_BROWN: RGB = [135, 94, 45];        // #875E2D 关卡界面文字/数字统一色
 
+// 关卡背景蒙版：黑色半透明压暗（毛玻璃效果的一部分，压不住背景就调大，挡太多就调小）
+const LEVEL_BG_MASK_ALPHA = 30;
+
 // ========== 布局（设计分辨率 768×1344，布局坐标按设计稿写死） ==========
 // 全屏底板/遮罩不按设计分辨率铺，统一用 view.getVisibleSize()（见 visSize）：
 // 真机宽高比与设计分辨率不同时可见区会扩展，固定 768×1344 会铺不满留边。
@@ -227,9 +230,19 @@ export default class NuonuoApp extends Component {
         PlatHelper.GameClubButtonShowHide(false);   // 隐藏菜单页的游戏圈原生按钮（会盖在棋盘上）
         const root = this.newScreen("game");
 
-        // 背景：先铺兜底色，再异步加载 level_bg.jpg 覆盖（未就绪回退纯色）
+        // 背景：先铺兜底色，再异步加载毛玻璃背景（level_bg 的高斯模糊版）覆盖；模糊版未就绪回退原图
         this.fullBg(root, C_PAGE_BG);
-        this.loadFullBgSprite(root, 'level', 'level_bg');
+        this.loadFullBgSprite(root, 'level', 'level_bg_blur', ['level', 'level_bg']);
+        // 背景蒙版：半透明深色压暗，让棋盘成为视觉焦点（顶板/棋盘在其后添加，渲染在蒙版之上）
+        const bgMask = new Node("bgMask");
+        bgMask.layer = root.layer;
+        root.addChild(bgMask);
+        const vsMask = this.visSize();
+        bgMask.addComponent(UITransform).setContentSize(vsMask.width, vsMask.height);
+        const mg = bgMask.addComponent(Graphics);
+        mg.fillColor = this.makeColor([0, 0, 0], LEVEL_BG_MASK_ALPHA);
+        mg.rect(-vsMask.width / 2, -vsMask.height / 2, vsMask.width, vsMask.height);
+        mg.fill();
 
         // 顶部底板（static_bg 九宫格）：剩余物品/关卡信息；设置按钮放左上角
         const topPlate = this.loadPlate(root, 620, 110, 0, 515);
@@ -725,18 +738,30 @@ export default class NuonuoApp extends Component {
     /**
      * 全屏背景大图：按贴图原始尺寸居中显示（first_bg / level_bg），不做拉伸。
      * 图片尺寸以实际资源为准（后续会调整图片）：画布只露出中心部分，超出部分由屏幕两侧裁掉。
+     * fallback：主图加载失败时回退的 [目录, 文件名]（如毛玻璃背景未导入时回退原图）。
      */
-    private loadFullBgSprite(parent: Node, folder: string, name: string): Node {
+    private loadFullBgSprite(parent: Node, folder: string, name: string, fallback: [string, string] | null = null): Node {
         const n = new Node(name);
         n.layer = parent.layer;
         parent.addChild(n);
         n.setPosition(0, 0, 0);
         n.addComponent(UITransform);
-        resources.load(`nuonuo/${folder}/${name}/spriteFrame`, SpriteFrame, (err, sf) => {
-            if (err || !sf || !n.isValid) return;
+        const put = (sf: SpriteFrame) => {
+            if (!n.isValid) return;
             // sizeMode 默认 TRIMMED：按 spriteFrame 原始尺寸渲染，节点尺寸由 Sprite 自动同步
             const spr = n.addComponent(Sprite);
             spr.spriteFrame = sf;
+        };
+        resources.load(`nuonuo/${folder}/${name}/spriteFrame`, SpriteFrame, (err, sf) => {
+            if (err || !sf) {
+                if (fallback) {
+                    resources.load(`nuonuo/${fallback[0]}/${fallback[1]}/spriteFrame`, SpriteFrame, (err2, sf2) => {
+                        if (!err2 && sf2) put(sf2);
+                    });
+                }
+                return;
+            }
+            put(sf);
         });
         return n;
     }
