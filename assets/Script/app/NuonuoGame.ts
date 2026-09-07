@@ -187,7 +187,6 @@ export default class NuonuoGame extends Component {
             ['gezi', 'gezi'],
             ['zhangai', 'zhangai'],
             ['arr', 'arr'],
-            ['xuanzhogn', 'xuanzhogn'],
             ['freeon', 'freeon'],
             ['snow', 'snow'],
             ...Array.from({ length: 5 }, (_, i) => [`portal_${i + 1}`, `portal${i + 1}`] as [string, string]),
@@ -741,16 +740,16 @@ export default class NuonuoGame extends Component {
     /** 按源格物品构建浮动预览节点（复用美术贴图，未就绪回退色卡） */
     private buildItemPreview(cs: number): Node {
         const cell = this.board.getCell(this.dragFrom[0], this.dragFrom[1]);
-        const n = this.buildItemVisual(cell.itemType, cs, true);
+        const n = this.buildItemVisual(cell.itemType, cs);
         n.name = "dragPreview";
         return n;
     }
 
     /**
      * 构建物品视觉节点（dizuo 底座 + item_N 图标，未就绪回退色卡），原点在格心，供拖拽预览 / 特效复用。
-     * withPad：仅拖拽预览传 true，在底层垫 xuanzhogn 选中高亮金底（对齐源工程选中态三层渲染：金底 → dizuo → item）。
+     * 拖拽预览不垫 xuanzhogn 金底（用户指定去掉）。
      */
-    private buildItemVisual(itemType: ItemType, cs: number, withPad: boolean = false): Node {
+    private buildItemVisual(itemType: ItemType, cs: number): Node {
         const n = new Node("itemVisual");
         n.layer = this.node.layer;
         n.addComponent(UITransform).setContentSize(cs, cs);
@@ -759,8 +758,6 @@ export default class NuonuoGame extends Component {
         const dizuo = id ? NuonuoGame._sfCache.get('dizuo') : null;
         const itemSf = id ? NuonuoGame._sfCache.get(`item_${id}`) : null;
         if (dizuo && itemSf) {
-            // 选中垫垫底（仅拖拽预览）：xuanzhogn 中心不透明，必须画在最底层，不能盖住物品
-            if (withPad) this.trySprite(n, 'xuanzhogn', cs);
             const pad = Math.max(4, cs * 0.08);
             this.addSprite(n, dizuo, cs, pad);
             const iconInset = pad + (cs - pad * 2) * 0.15;
