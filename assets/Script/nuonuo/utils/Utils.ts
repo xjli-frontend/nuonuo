@@ -52,6 +52,9 @@ export function deepClone<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj));
 }
 
+// 【已停用 2026-09-05】roundRectPath 仅被已停用的引导/对话系统使用，按用户要求注释
+// export function roundRectPath(ctx, x, y, w, h, r): void { /* ... */ }
+
 /**
  * 格式化进度显示文字
  * @param placed 已归位数量

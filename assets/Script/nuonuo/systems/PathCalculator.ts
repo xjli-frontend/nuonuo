@@ -46,7 +46,18 @@ export class PathCalculator {
       [0, 1],   // 右
     ];
 
+    // 【v0.8.10】严格单向通道：起点若在单向门格上（物品压在门格上时 onewayDir 保留），
+    // 只允许沿箭头方向离开；反向/垂直方向视为不可达（物品一旦进入门格就被"通道"约束）。
+    const startCell = this.board.getCell(row, col);
+    const startOnewayDir = startCell?.onewayDir;
+
     for (const [dr, dc] of directions) {
+      // 起点是单向门格：仅箭头同向可通行（方案 B：严格单向通道）
+      if (startOnewayDir) {
+        const startDirVec = ONEWAY_DIR_VECTORS[startOnewayDir];
+        if (startDirVec[0] !== dr || startDirVec[1] !== dc) continue;
+      }
+
       let r = row + dr;
       let c = col + dc;
 

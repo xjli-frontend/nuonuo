@@ -7,8 +7,12 @@
  *
  * 源工程里 DOM/Canvas 耦合的文件（scenes/* / systems/BoardRenderer / managers/InputManager
  * / core/GameApp / editor/* / ui/Button / main.ts / assets/GameAssets）不在白名单内，自然被跳过。
- * 白名单只含「纯逻辑」文件，其中两处做过引擎无关化适配，由脚本内 transform 自动完成：
+ * 白名单只含「纯逻辑」文件，其中做了三处引擎无关化适配，由脚本内 transform 自动完成：
  *   - core/GameState.ts：localStorage → getStorageAdapter()（注入 Storage 适配器）
+ *   - core/GameState.ts：移除 AudioManager 依赖（audioManager.syncSettings() 调用替换为注释，
+ *     音频同步由宿主层负责，核心包保持零外部依赖）
+ *   - core/GameState.ts：注入本工程专用方法 reload() / setUnlockedLevel()
+ *     （源工程没有；选关直设进度 + 宿主 boot 兜底重读存档，幂等注入）
  *   - utils/Utils.ts：删除依赖 DOM 的 screenToCanvas()，换成一段说明
  * 因此源工程更新后可直接同步，无需再手工做适配。
  *
@@ -108,6 +112,40 @@ function adaptGameState(src) {
     'localStorage 不可用时静默失败（微信环境可能没有 localStorage）',
     '存储不可用时静默失败（如宿主未注入适配器）',
   );
+
+  // 4. 移除 AudioManager 依赖：核心包引擎无关，音频同步由宿主层负责。
+  //    （源工程里没这两个串时自然跳过，不需要抛错）
+  out = out.split("import { audioManager } from '../managers/AudioManager';" + EOL).join('');
+  out = out.split('audioManager.syncSettings();').join('// 音频状态同步由宿主层负责（核心包无 AudioManager）');
+
+  // 5. 注入本工程专用方法（幂等：已注入则跳过；锚点不存在说明源结构变了，宁可失败）
+  if (!out.includes('setUnlockedLevel(level: number)')) {
+    const anchor = EOL + '  // ========== 本地存储 ==========';
+    if (!out.includes(anchor)) {
+      throw new Error('未找到「本地存储」分节标记，源结构可能已变化');
+    }
+    const methods = [
+      '',
+      '  /** 【选关流程】直接把解锁进度设为指定关卡（选关页点选即存，重进游戏从这关续玩；通关进度仍走 unlockLevel 递增） */',
+      '  setUnlockedLevel(level: number): void {',
+      '    if (level >= 1 && level !== this.data.maxUnlockedLevel) {',
+      '      this.data.maxUnlockedLevel = level;',
+      '      this.saveToStorage();',
+      '    }',
+      '  }',
+      '',
+      '  /**',
+      '   * 重新读取存档。',
+      '   * 构造器里已读一次，但宿主环境的模块求值顺序不保证存储适配器已注入',
+      '   * （GameState 可能早于宿主的存储注入模块被求值，读到内存空存档）；',
+      '   * 宿主 boot 时再显式调用一次即可兜底（见 NuonuoApp.boot）。',
+      '   */',
+      '  reload(): void {',
+      '    this.loadFromStorage();',
+      '  }',
+    ].join(EOL);
+    out = out.replace(anchor, methods + anchor);
+  }
 
   return out;
 }

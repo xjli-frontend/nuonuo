@@ -64,7 +64,7 @@ export interface CellData {
   portalUses?: number;     // 传送门剩余使用次数
   freezeCounter?: number;  // 水洼结冰倒计时（归零后变冰块）
   placedCount?: number;    // 【v0.6.2】目标格已容纳的归位物品数（无限容量记账，0=未归位）
-  onewayDir?: OnewayDirection; // 单向门方向：物品只能沿此方向进入/穿过该格
+  onewayDir?: OnewayDirection; // 单向门方向：物品只能沿此方向进入；停在门格上后离开也仅允许沿此方向（v0.8.10 严格单向通道）
   buttonId?: number;       // 按钮 ID：与受控的活动墙/桥共享同一 ID
   buttonPressed?: boolean; // 按钮是否处于按下态（物品压住时为 true）
   barrierId?: number;      // 活动墙/桥 ID：与所连按钮共享同一 ID
@@ -89,7 +89,7 @@ export interface LevelConfig {
   }[];
   oneways?: {                 // 单向门配置（可选）
     pos: [number, number];    // 单向门位置 [row, col]
-    dir: OnewayDirection;     // 通行方向：物品只能沿此方向进入/穿过
+    dir: OnewayDirection;     // 通行方向：物品沿此方向进入；停在门格上后也只能沿此方向离开（v0.8.10 严格单向通道）
   }[];
   buttons?: {                 // 按钮配置（可选，与活动墙/桥通过共享 id 配对）
     id: number;               // 按钮 ID（与受控的活动墙/桥共享同一 ID）
@@ -151,7 +151,9 @@ export enum GameEvent {
   RESUME = 'ui:resume',                  // 继续
   RESTART = 'ui:restart',                // 重新开始
   UNDO = 'ui:undo',                      // 撤销
-  TOGGLE_SOUND = 'ui:toggleSound',       // 切换音效
+  TOGGLE_SOUND = 'ui:toggleSound',       // 切换音效（旧字段，兼容保留）
+  TOGGLE_MUSIC = 'ui:toggleMusic',       // 切换背景音乐
+  TOGGLE_SFX = 'ui:toggleSfx',           // 切换音效
 
   // 输入相关
   TOUCH_START = 'input:touchStart',      // 触摸开始
@@ -163,7 +165,10 @@ export enum GameEvent {
 export interface GameStateData {
   currentLevel: number;     // 当前关卡编号
   maxUnlockedLevel: number; // 已解锁的最高关卡
-  soundEnabled: boolean;    // 音效开关
+  musicEnabled: boolean;    // 背景音乐开关
+  sfxEnabled: boolean;      // 音效开关
+  vibrationEnabled: boolean; // 震动开关
+  soundEnabled: boolean;    // 旧版统一开关（仅存档兼容用，读取时用于迁移到上面两个开关）
   moveCount: number;        // 当前关卡移动次数（替代原 stepsUsed）
   itemsPlaced: number;      // 当前关卡已归位物品数
   totalItems: number;       // 当前关卡物品总数
@@ -176,17 +181,36 @@ export interface GameStateData {
   maxSteps: number | null;  // 【步数限制】步数上限（null=无限制）
   undoItems: number;        // 【每日奖励】全局撤回道具数量（跨关卡）
   refreshItems: number;     // 【每日奖励】全局刷新道具数量（跨关卡）
+  hammerItems: number;      // 【破冰锤】全局破冰锤道具数量（跨关卡），敲碎冰块恢复原机制
   adStepsUsed: number;      // 【广告续命】本关已看广告加步数次数
-  maxAdSteps: number;       // 【广告续命】本关可看广告加步数上限（默认 3）
+  maxAdSteps: number;       // 【广告续命】本关可看广告加步数上限（默认见 GameConfig.AD_LIMITS.steps）
+  adUndoUsed: number;       // 【广告续命】本关已看广告换撤销道具次数
+  adUndoMax: number;        // 【广告续命】本关可看广告换撤销道具上限（默认见 GameConfig.AD_LIMITS.undo）
+  adRefreshUsed: number;    // 【广告续命】本关已看广告换刷新道具次数
+  adRefreshMax: number;     // 【广告续命】本关可看广告换刷新道具上限（默认见 GameConfig.AD_LIMITS.refresh）
+  adHammerUsed: number;     // 【广告续命】本关已看广告换破冰锤次数
+  adHammerMax: number;      // 【广告续命】本关可看广告换破冰锤上限（默认见 GameConfig.AD_LIMITS.hammer）
 }
 
-// ========== 移动记录 ==========
-// 记录每一步操作，用于撤销功能
+// ========== 物品运行时数据 ==========
+// 物品在游戏运行时的状态（位置、层数、是否已归位）
+export interface ItemRuntime {
+  type: ItemType;    // 物品类型
+  row: number;       // 当前行
+  col: number;       // 当前列
+  layer: number;     // 当前层数（1=顶层）
+  placed: boolean;   // 是否已归位
+}
+
+// ========== 移动记录（快照式撤销） ==========
+// 每步移动前记录完整状态快照，撤销时整体恢复，
+// 从而回滚所有副作用（传送门次数、水洼倒计时/结冰、步数、归位计数等）。
 export interface MoveRecord {
-  itemIndex: number;            // 被移动的物品索引
-  fromPos: [number, number];    // 起始位置 [row, col]
-  toPos: [number, number];      // 目标位置 [row, col]
-  fromLayer: number;            // 移动前的层数
+  boardGrid: CellData[][];   // 移动前的棋盘深拷贝（含 stack 数组）
+  items: ItemRuntime[];      // 移动前的物品运行时快照
+  moveCount: number;         // 移动前的移动次数
+  stepsUsed: number;         // 移动前的已用步数（步数限制）
+  itemsPlaced: number;       // 移动前的已归位物品数
 }
 
 // ========== 可到达位置 ==========

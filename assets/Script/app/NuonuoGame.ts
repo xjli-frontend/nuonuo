@@ -137,10 +137,29 @@ export default class NuonuoGame extends Component {
     // 撤销快照：JSON 深拷贝棋盘 + 本地计数（Board.clone 是浅拷贝，不能用）
     private history: string[] = [];
 
+    // 破冰锤选择模式：true=等待玩家点击一块冰块敲碎（对齐源工程 hammerMode）
+    private _hammerMode: boolean = false;
+
+    /** 破冰模式开关（宿主点破冰锤按钮切换；切模式时重绘棋盘刷新冰块高亮） */
+    public get hammerMode(): boolean { return this._hammerMode; }
+    public set hammerMode(v: boolean) {
+        this._hammerMode = v;
+        this.render();
+        this.onHammerModeChange?.(v);
+    }
+
+    /** 本关当前是否存在可见冰块（宿主点破冰锤按钮时先检测） */
+    public hasIce(): boolean {
+        return this.board ? this.board.hasAnyIce() : false;
+    }
+
     // 宿主注入的回调（默认空；不注入则静默，保持本类框架无关）
     public onHud: ((h: HudData) => void) | null = null;
     public onResult: ((r: ResultData) => void) | null = null;
     public onTip: ((text: string) => void) | null = null;
+    public onSfx: ((name: string) => void) | null = null;                 // 音效（宿主接 SoundManager，名称对齐源工程 AudioManager）
+    public onVibrate: ((kind: 'short' | 'long') => void) | null = null;  // 震动（宿主接 PlatHelper，内部尊重震动开关）
+    public onHammerModeChange: ((active: boolean) => void) | null = null; // 破冰模式切换（宿主刷新破冰锤按钮的「敲冰中」标识）
 
     protected onLoad(): void {
         // 提前预加载美术贴图（进程内一次性）；渲染时机由 initLevel 控制（贴图就绪前不渲染）
@@ -167,8 +186,8 @@ export default class NuonuoGame extends Component {
             ['dizuo', 'dizuo'],
             ['gezi', 'gezi'],
             ['zhangai', 'zhangai'],
+            ['arr', 'arr'],
             ['xuanzhogn', 'xuanzhogn'],
-            ['water', 'water'],
             ['freeon', 'freeon'],
             ['snow', 'snow'],
             ...Array.from({ length: 5 }, (_, i) => [`portal_${i + 1}`, `portal${i + 1}`] as [string, string]),
@@ -245,6 +264,8 @@ export default class NuonuoGame extends Component {
         this.dragFrom = null;
         this.reachable.clear();
         this.clearDragPreview();
+        this._hammerMode = false;
+        this.onHammerModeChange?.(false);   // 重开/换关退出破冰模式（宿主同步按钮标识；首次 play 时按钮尚未创建，回调是空操作）
 
         this.ensureUI();
         // 贴图就绪前不渲染棋盘：缓存半满时渲染会出现「gezi 已就绪、物品/地形回退被 gezi 盖住」
@@ -256,6 +277,9 @@ export default class NuonuoGame extends Component {
                 if (this.node && this.node.isValid) this.render();
             });
         }
+
+        // 进入关卡音效（对齐源工程 SceneGame 初始化时 playSfx('level_start')）
+        this.onSfx?.('level_start');
     }
 
     /** 只创建一次的棋盘容器，每关复用（HUD/按钮由宿主 NuonuoApp 提供） */
@@ -360,7 +384,7 @@ export default class NuonuoGame extends Component {
                 if (!this.trySprite(node, 'zhangai', cs)) this.fillCellRect(node, C_OBSTACLE, x, y, w, rad, cs);
                 break;
             case CellType.WATER:
-                // 水洼：gezi 底 + 左上角雪花 + 红字倒计时（倒计时结束结冰）
+                // 水洼：不铺水贴图，只保留左上角雪花 + 红字倒计时提示（倒计时结束结冰）
                 if (cell.freezeCounter !== undefined && cell.freezeCounter > 0) {
                     this.addSnowCount(node, cell.freezeCounter, cs);
                 }
@@ -372,8 +396,7 @@ export default class NuonuoGame extends Component {
                 this.renderPortal(node, g, cell, cs, x, y, w, rad);
                 break;
             case CellType.ONEWAY:
-                this.fillCellRect(node, C_ONEWAY, x, y, w, rad, cs);
-                this.addCellText(node, ONEWAY_ARROW[cell.onewayDir] ?? '→', cs, C_BROWN);
+                this.renderOneway(node, cell, cs, x, y, w, rad);
                 break;
             case CellType.BUTTON:
                 this.drawButtonCell(node, x, y, w, cs);
@@ -390,12 +413,16 @@ export default class NuonuoGame extends Component {
                 break;
             case CellType.ITEM:
                 this.renderItem(node, g, cell, r, c, cs, x, y, w, rad);
+                // 物品压在水洼上：不铺水贴图，在物品层之上叠雪花 + 倒计时提示（角标不被底座盖住）
+                if (cell.freezeCounter !== undefined && cell.freezeCounter > 0) {
+                    this.addSnowCount(node, cell.freezeCounter, cs);
+                }
                 break;
             default: // EMPTY
                 break;
         }
 
-        // 水洼覆盖层：目标格 / 传送门上的水（雪花 + 红字倒计时）
+        // 水洼覆盖层：目标格 / 传送门上的水（不铺水贴图，只保留雪花 + 红字倒计时）
         if ((cell.type === CellType.TARGET || cell.type === CellType.PORTAL)
             && cell.freezeCounter !== undefined && cell.freezeCounter > 0) {
             this.addSnowCount(node, cell.freezeCounter, cs);
@@ -404,6 +431,11 @@ export default class NuonuoGame extends Component {
         // 可落点高亮（独立子节点盖在最上层，否则会被 gezi/物品贴图挡住）
         if (this.reachable.has(`${r},${c}`)) {
             this.addHighlight(node, cs);
+        }
+
+        // 破冰模式：高亮所有冰块格，提示可敲碎目标（对齐源工程 renderIceHighlights）
+        if (this._hammerMode && cell.type === CellType.ICE) {
+            this.addIceHighlight(node, cs);
         }
 
         return node;
@@ -421,6 +453,31 @@ export default class NuonuoGame extends Component {
         // 可使用次数 → 右下角 num_bg 圆底 + 数字（仅有限次数）
         if (cell.portalUses !== undefined) {
             this.addNumBadge(node, cell.portalUses, cs, 'br', C_BROWN);
+        }
+    }
+
+    /** 单向门：zhangai 底图 + arr.png 方向箭头（默认指左，按方向旋转；素材缺失回退纯色+文字箭头，对齐源工程 drawOneway） */
+    private renderOneway(node: Node, cell: CellData, cs: number, x: number, y: number, w: number, rad: number): void {
+        if (!this.trySprite(node, 'zhangai', cs)) {
+            this.fillCellRect(node, C_ONEWAY, x, y, w, rad, cs);
+        }
+        // 方向 → 旋转角（Cocos 正角=逆时针；arr.png 默认指左：上=-90、下=+90，右=180）
+        const angleMap: Record<string, number> = { left: 0, up: -90, right: 180, down: 90 };
+        const angle = angleMap[cell.onewayDir ?? 'left'] ?? 0;
+        const arrSf = NuonuoGame._sfCache.get('arr');
+        if (arrSf) {
+            // 箭头尺寸取格子的 62%，保证完全落在 zhangai 底图内部（对齐源工程）
+            const arrowSize = cs * 0.62;
+            const n = new Node("arrow");
+            n.layer = node.layer;
+            node.addChild(n);
+            n.addComponent(UITransform).setContentSize(arrowSize, arrowSize);
+            const spr = n.addComponent(Sprite);
+            spr.sizeMode = Sprite.SizeMode.CUSTOM;
+            spr.spriteFrame = arrSf;
+            n.angle = angle;
+        } else {
+            this.addCellText(node, ONEWAY_ARROW[cell.onewayDir] ?? '→', cs, C_BROWN);
         }
     }
 
@@ -581,6 +638,13 @@ export default class NuonuoGame extends Component {
         this.dragFrom = null;
         this.reachable.clear();
         this.clearDragPreview();
+
+        // 破冰模式：点击冰块敲碎 / 点其他格子提示（不消耗道具），不进入拖拽（对齐源工程）
+        if (this._hammerMode) {
+            this.handleHammerTouch(e);
+            return;
+        }
+
         const rc = this.touchToGrid(e);
         if (rc) {
             const [r, c] = rc;
@@ -589,6 +653,8 @@ export default class NuonuoGame extends Component {
                 this.dragFrom = [r, c];
                 const reach = this.pathCalc.calculateReachable(r, c);
                 reach.forEach(x => this.reachable.add(`${x.row},${x.col}`));
+                // 拿起物品音效（无震动，避免拿起/放下频繁打扰，对齐源工程）
+                this.onSfx?.('pick');
             }
         }
         // 无论是否选中，都重绘一遍，确保旧的落点高亮被清除
@@ -622,9 +688,34 @@ export default class NuonuoGame extends Component {
             this.doMove(from[0], from[1], rc[0], rc[1]);
         } else {
             this.render(); // 未落到可落点，物品弹回原位
+            this.onSfx?.('invalid');
+            this.onVibrate?.('short');
             // 被挡住：源格 + 目标格轻微抖动，表现「反弹」
             this.shakeCell(from[0], from[1]);
             if (rc) this.shakeCell(rc[0], rc[1]);
+        }
+    }
+
+    /** 破冰模式下的点击处理：命中冰块则消耗破冰锤敲碎，否则提示不消耗（对齐源工程 handleHammerTouch） */
+    private handleHammerTouch(e: EventTouch): void {
+        const rc = this.touchToGrid(e);
+        if (!rc) return;
+        const [r, c] = rc;
+        if (this.board.isIce(r, c)) {
+            // 命中冰块：消耗道具 + 敲碎恢复原机制
+            gameState.useHammerItem();
+            this.board.breakIce(r, c);
+            this.board.recalcButtons(); // 恢复的按钮/墙桥态重新结算
+            this.onSfx?.('ice');
+            this.onVibrate?.('short');
+            this._hammerMode = false;
+            this.render();
+            this.onHammerModeChange?.(false);   // 通知宿主退出敲冰标识
+            this.onTip?.('已敲碎冰块');
+        } else {
+            // 非冰块：不消耗道具，保持破冰模式
+            this.onSfx?.('invalid');
+            this.onTip?.('请点击冰块');
         }
     }
 
@@ -650,13 +741,16 @@ export default class NuonuoGame extends Component {
     /** 按源格物品构建浮动预览节点（复用美术贴图，未就绪回退色卡） */
     private buildItemPreview(cs: number): Node {
         const cell = this.board.getCell(this.dragFrom[0], this.dragFrom[1]);
-        const n = this.buildItemVisual(cell.itemType, cs);
+        const n = this.buildItemVisual(cell.itemType, cs, true);
         n.name = "dragPreview";
         return n;
     }
 
-    /** 构建物品视觉节点（dizuo 底座 + item_N 图标，未就绪回退色卡），原点在格心，供拖拽预览 / 特效复用 */
-    private buildItemVisual(itemType: ItemType, cs: number): Node {
+    /**
+     * 构建物品视觉节点（dizuo 底座 + item_N 图标，未就绪回退色卡），原点在格心，供拖拽预览 / 特效复用。
+     * withPad：仅拖拽预览传 true，在底层垫 xuanzhogn 选中高亮金底（对齐源工程选中态三层渲染：金底 → dizuo → item）。
+     */
+    private buildItemVisual(itemType: ItemType, cs: number, withPad: boolean = false): Node {
         const n = new Node("itemVisual");
         n.layer = this.node.layer;
         n.addComponent(UITransform).setContentSize(cs, cs);
@@ -665,6 +759,8 @@ export default class NuonuoGame extends Component {
         const dizuo = id ? NuonuoGame._sfCache.get('dizuo') : null;
         const itemSf = id ? NuonuoGame._sfCache.get(`item_${id}`) : null;
         if (dizuo && itemSf) {
+            // 选中垫垫底（仅拖拽预览）：xuanzhogn 中心不透明，必须画在最底层，不能盖住物品
+            if (withPad) this.trySprite(n, 'xuanzhogn', cs);
             const pad = Math.max(4, cs * 0.08);
             this.addSprite(n, dizuo, cs, pad);
             const iconInset = pad + (cs - pad * 2) * 0.15;
@@ -693,6 +789,8 @@ export default class NuonuoGame extends Component {
             this.history.pop();
             // 传送失败（出口被堵/次数耗尽等）：物品弹回原位 + 源格/目标格抖动，与非法移动表现一致
             this.render();
+            this.onSfx?.('invalid');
+            this.onVibrate?.('short');
             this.shakeCell(fr, fc);
             this.shakeCell(tr, tc);
             if (this.board.getCell(tr, tc)?.type === CellType.PORTAL) {
@@ -702,11 +800,18 @@ export default class NuonuoGame extends Component {
         }
 
         this.stepsUsed++;
-        this.board.tickWaters();
+        // 水洼倒计时：每次移动后扣减，归零触发结冰（结冰播 ice 音，对齐源工程）
+        const frozen = this.board.tickWaters();
+        if (frozen) this.onSfx?.('ice');
+        // 机关状态变化播 switch 音（快照对比，变化时才播，对齐源工程 mechSnapshot）
+        const mechBefore = this.mechSnapshot();
         this.board.recalcButtons();
+        if (this.mechSnapshot() !== mechBefore) this.onSfx?.('switch');
 
         // 传送门特效：入口吸入（大变小）→ 出口沿行进方向滑出（小变大），动画结束后再重绘与结算
         if (res.teleported && itemType !== undefined) {
+            this.onSfx?.('teleport');
+            this.checkStepLow();
             this.playTeleportEffect(tr, tc, res.finalRow, res.finalCol, itemType);
             return true;
         }
@@ -714,12 +819,36 @@ export default class NuonuoGame extends Component {
         // 归位（消除）：落点格子变为 TARGET → 播放旋转缩小消失特效
         const placed = this.board.getCell(res.finalRow, res.finalCol)?.type === CellType.TARGET;
         if (placed && itemType !== undefined) {
+            this.onSfx?.('match');
+            this.onVibrate?.('short');
             this.playEliminateEffect(res.finalRow, res.finalCol, itemType);
+        } else {
+            // 普通落位（传送场景已播放传送音，不叠加落位音；无震动，对齐源工程）
+            this.onSfx?.('drop');
         }
 
         this.render();
+        this.checkStepLow();
         this.checkEnd();
         return true;
+    }
+
+    /** 机关状态快照：所有按钮按下态 + 活动墙/桥激活态（判断一次移动是否改变机关状态，播 switch 音） */
+    private mechSnapshot(): string {
+        const barriers = this.board.barrierPositions
+            .map(([r, c]) => (this.board.isBarrierActive(r, c) ? '1' : '0'))
+            .join('');
+        const buttons = this.board.buttonPositions
+            .map(([r, c]) => (this.board.getCell(r, c)?.buttonPressed ? '1' : '0'))
+            .join('');
+        return `${barriers}|${buttons}`;
+    }
+
+    /** 步数告急提示（剩余 3 步时提示一次，对齐源工程 stepsLeft === 3） */
+    private checkStepLow(): void {
+        if (this.maxSteps !== null && this.maxSteps - this.stepsUsed === 3) {
+            this.onSfx?.('step_low');
+        }
     }
 
     // ========== 表现特效（消除 / 碰撞抖动） ==========
@@ -779,9 +908,11 @@ export default class NuonuoGame extends Component {
                     .to(0.18, { position: v3(lx, ly, 0), scale: v3(1, 1, 1) }, { easing: 'quadOut' })
                     .call(() => {
                         pop.destroy();
-                        // 动画结束：重绘最终状态；若落点是归位格，接消除特效
+                        // 动画结束：重绘最终状态；若落点是归位格，接消除特效（音/震对齐普通归位）
                         this.render();
                         if (this.board.getCell(landRow, landCol)?.type === CellType.TARGET) {
+                            this.onSfx?.('match');
+                            this.onVibrate?.('short');
                             this.playEliminateEffect(landRow, landCol, itemType);
                         }
                         this.checkEnd();
@@ -820,6 +951,7 @@ export default class NuonuoGame extends Component {
     public undo(): boolean {
         const s = this.history.pop();
         if (!s) {
+            this.onSfx?.('invalid');
             this.onTip?.("没有可撤销的步骤");
             return false;
         }
@@ -828,6 +960,7 @@ export default class NuonuoGame extends Component {
         this.stepsUsed = o.stepsUsed;
         this.board.recalcButtons();
         this.render();
+        this.onSfx?.('undo');
         return true;
     }
 
@@ -911,6 +1044,7 @@ export default class NuonuoGame extends Component {
         this.history = [];
         this.board.recalcButtons();
         this.render();
+        this.onSfx?.('refresh');
     }
 
     /** 恢复格子为底层地形（镜像 Board.moveItem 的「处理起始格」逻辑） */
@@ -978,6 +1112,8 @@ export default class NuonuoGame extends Component {
     }
 
     private onWin(): void {
+        this.onSfx?.('win');
+        this.onVibrate?.('long');
         gameState.unlockLevel(this.level + 1);
         this.onResult?.({
             win: true,
@@ -988,6 +1124,7 @@ export default class NuonuoGame extends Component {
     }
 
     private onFail(): void {
+        this.onSfx?.('fail');
         this.onResult?.({
             win: false,
             level: this.level,
@@ -1035,6 +1172,24 @@ export default class NuonuoGame extends Component {
         g.fill();
         g.lineWidth = 3;
         g.strokeColor = new Color(...C_HIGHLIGHT, 255);
+        g.roundRect(-cs / 2 + inset, -cs / 2 + inset, cs - inset * 2, cs - inset * 2, rad);
+        g.stroke();
+    }
+
+    /** 破冰模式冰块高亮：黄底 30% + 黄描边，盖在冰块贴图之上（对齐源工程 renderIceHighlights 配色） */
+    private addIceHighlight(parent: Node, cs: number): void {
+        const n = new Node("hl_ice");
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.addComponent(UITransform).setContentSize(cs, cs);
+        const g = n.addComponent(Graphics);
+        const inset = 1;
+        const rad = Math.max(4, cs * 0.12);
+        g.fillColor = new Color(245, 197, 24, 77);
+        g.roundRect(-cs / 2 + inset, -cs / 2 + inset, cs - inset * 2, cs - inset * 2, rad);
+        g.fill();
+        g.lineWidth = 2.5;
+        g.strokeColor = new Color(245, 197, 24, 255);
         g.roundRect(-cs / 2 + inset, -cs / 2 + inset, cs - inset * 2, cs - inset * 2, rad);
         g.stroke();
     }

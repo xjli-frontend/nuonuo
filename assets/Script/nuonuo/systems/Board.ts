@@ -12,7 +12,7 @@
  * 这样能保证数据一致性，不会出现"某个模块偷偷改了数据导致 bug"。
  */
 
-import { CellData, CellType, ItemType, LevelConfig } from '../types/index';
+import { CellData, CellType, ItemType, LevelConfig, ONEWAY_DIR_VECTORS } from '../types/index';
 import { GameConfig } from '../config/GameConfig';
 
 /** moveItem 的返回结果 */
@@ -166,23 +166,25 @@ export class Board {
     }
 
     // 第三步四分之三：放置水洼
-    // 水洼可以放在空格、目标格上，甚至在物品下方
-    // 水洼是一个"附加属性"，不改变格子的基本类型（空格/目标格/物品格）
-    // 但如果格子当前是纯空格，则类型变为 WATER
+    // 水洼是"附加覆盖层"，可叠加在 空格/目标格/传送门/单向门/按钮/活动墙/活动桥上，
+    // 也可在物品下方（物品放置时保留 freezeCounter）。
+    // - 纯空格 → 变为 WATER 类型
+    // - 其他机制格 → 保持原类型，仅附加 freezeCounter（结冰时 freezeCell 会把整格变 ICE，原机制字段保留供破冰锤恢复）
+    // - 障碍/冰块上不放水洼（防御性跳过）
     if (config.waters) {
       for (const water of config.waters) {
         const [row, col] = water.pos;
         if (this.isValidCell(row, col)) {
           const cell = this.grid[row][col];
+          if (cell.type === CellType.OBSTACLE || cell.type === CellType.ICE) {
+            continue;
+          }
           if (cell.type === CellType.EMPTY) {
             // 空格变水洼
             cell.type = CellType.WATER;
             cell.freezeCounter = water.freezeIn;
-          } else if (cell.type === CellType.TARGET) {
-            // 目标格上的水洼：保持 TARGET 类型但附加 freezeCounter
-            cell.freezeCounter = water.freezeIn;
-          } else if (cell.type === CellType.PORTAL) {
-            // 传送门上的水洼：保持 PORTAL 类型但附加 freezeCounter
+          } else {
+            // 目标格/传送门/单向门/按钮/活动墙/桥：保留原类型，附加 freezeCounter
             cell.freezeCounter = water.freezeIn;
           }
           // 物品下方的水洼在物品放置后处理
@@ -426,6 +428,49 @@ export class Board {
     return cell.type === CellType.ICE;
   }
 
+  /** 本关当前是否存在可见的冰块（破冰锤使用前的检测） */
+  hasAnyIce(): boolean {
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        if (this.grid[r][c].type === CellType.ICE) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 破冰锤：敲碎一块冰块，恢复其结冰前的原机制。
+   *
+   * 结冰时（freezeCell）只把 type 改为 ICE，原机制字段（portalId/onewayDir/buttonId/
+   * barrierId/barrierKind/targetType）都被保留，这里按优先级恢复：
+   *   传送门 > 单向门 > 按钮 > 活动墙/桥 > 目标格 > 空格
+   *
+   * @returns 是否成功敲碎（目标不是冰块时返回 false，不消耗道具）
+   */
+  breakIce(row: number, col: number): boolean {
+    const cell = this.getCell(row, col);
+    if (!cell || cell.type !== CellType.ICE) return false;
+
+    if (cell.portalId !== undefined) {
+      cell.type = CellType.PORTAL;
+    } else if (cell.onewayDir !== undefined) {
+      cell.type = CellType.ONEWAY;
+    } else if (cell.buttonId !== undefined) {
+      cell.type = CellType.BUTTON;
+      cell.buttonPressed = false;
+    } else if (cell.barrierId !== undefined) {
+      cell.type = cell.barrierKind === 'wall' ? CellType.ACTIVE_WALL : CellType.ACTIVE_BRIDGE;
+      cell.barrierActive = false;
+    } else if (cell.targetType !== undefined) {
+      cell.type = CellType.TARGET;
+      cell.placedCount = 0; // 空目标格被冰封，恢复后无归位物品
+    } else {
+      cell.type = CellType.EMPTY;
+    }
+    cell.freezeCounter = undefined;
+    return true;
+  }
+
   /**
    * 获取某个格子的水洼倒计时（用于渲染显示）
    */
@@ -481,11 +526,13 @@ export class Board {
   /**
    * 判断一个格子是否是障碍物
    * 活动墙/桥未激活时视为障碍物（激活后可通行）
+   * 冰块（ICE）是永久障碍物，也视为障碍物
    */
   isObstacle(row: number, col: number): boolean {
     const cell = this.getCell(row, col);
     if (!cell) return true; // 越界视为障碍物
     if (cell.type === CellType.OBSTACLE) return true;
+    if (cell.type === CellType.ICE) return true;
     if (cell.type === CellType.ACTIVE_WALL || cell.type === CellType.ACTIVE_BRIDGE) {
       return cell.barrierActive !== true;
     }
@@ -615,13 +662,21 @@ export class Board {
       // 【v0.8.8/B】落点 = 可合法放置物品的格子（EMPTY/TARGET/WATER/ONEWAY/BUTTON/激活的活动墙·桥），
       // 含目标格（传送后可直接归位消除）；但排除：障碍/未激活墙·桥、越界、以及任何传送门（避免无限传送）。
       // 【v0.8.9/A】出口落点若已有物品且堆叠未满 MAX_STACK_LAYERS，允许直接堆叠上去（方案 A：传送门出口堆叠特例）
+      // 【bug 修复】落点若是单向门（含被物品压住、onewayDir 仍保留的单向门底格），
+      // 必须校验"钻出方向 == 门箭头方向"，否则视为不可达、阻止传送。
+      // 旧实现把 ONEWAY 直接纳入 isReachableDest，导致传送门绕过单向门的方向限制。
+      const isLandingOnewayOk =
+        landCell?.onewayDir === undefined ||
+        (ONEWAY_DIR_VECTORS[landCell.onewayDir][0] === dirRow &&
+          ONEWAY_DIR_VECTORS[landCell.onewayDir][1] === dirCol);
       const isLandingStackable =
         landCell?.type === CellType.ITEM && (landCell.stack?.length ?? 1) < GameConfig.MAX_STACK_LAYERS;
       const isLandingValid =
         !!landCell &&
         !this.isObstacle(landRow, landCol) &&
         (isReachableDest(landCell.type) || isLandingStackable) &&
-        landCell.type !== CellType.PORTAL;
+        landCell.type !== CellType.PORTAL &&
+        isLandingOnewayOk;
       if (!landCell || !isLandingValid) {
         return result; // 出口方向落点不可用，传送失败（物品回弹入口原位）
       }
@@ -775,6 +830,11 @@ export class Board {
         fromCell.type = CellType.EMPTY;
         fromCell.targetType = undefined;
       }
+
+      // 恢复水洼倒计时：未结冰（>0）的倒计时需要保留（-1 已在 ICE 分支处理，undefined=无水洼）
+      if (fromFreezeCounter !== undefined && fromFreezeCounter > 0) {
+        fromCell.freezeCounter = fromFreezeCounter;
+      }
     }
 
     result.success = true;
@@ -896,5 +956,31 @@ export class Board {
       row.map(cell => ({ ...cell }))
     );
     return board;
+  }
+
+  /**
+   * 深拷贝当前棋盘网格（快照式撤销用）。
+   * 注意：必须深拷贝 stack 数组，否则撤销恢复时会和后续操作共享引用导致数据错乱。
+   */
+  snapshot(): CellData[][] {
+    return this.grid.map(row => row.map(cell => this.cloneCell(cell)));
+  }
+
+  /**
+   * 用快照恢复棋盘网格（快照式撤销用）。
+   * 恢复后所有格子的状态（传送门次数 portalUses、水洼倒计时/冰块 freezeCounter、
+   * 按钮/墙桥态、堆叠 stack 等）都会回到快照时刻。
+   */
+  restore(grid: CellData[][]): void {
+    this.grid = grid.map(row => row.map(cell => this.cloneCell(cell)));
+  }
+
+  /** 深拷贝单个格子（含 stack 数组） */
+  private cloneCell(cell: CellData): CellData {
+    const copy: CellData = { ...cell };
+    if (cell.stack) {
+      copy.stack = cell.stack.map(s => ({ ...s }));
+    }
+    return copy;
   }
 }

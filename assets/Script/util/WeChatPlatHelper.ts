@@ -6,11 +6,16 @@ import { ReportEnum } from "../enum/ReportEnum";
 declare const wx: any;
 export class WeChatPlatHelper {
 
-    /** 震动 */
+    /** 短震动（轻震，轻微提示：回弹/归位/敲冰） */
     static vibrateShort() {
         wx.vibrateShort && wx.vibrateShort({
-            type: "medium"
+            type: "light"
         })
+    }
+
+    /** 长震动（重震，重要事件：通关） */
+    static vibrateLong() {
+        wx.vibrateLong && wx.vibrateLong();
     }
 
     static calcPosSize(targetNode: Node) {
@@ -378,6 +383,7 @@ const videoIds = [
     "adunit-27790c1980b36ebb",   // 道具 - 撤回
     "adunit-ea1f4d5ea4698881",   // 道具 - 刷新
     "adunit-xxxxxxxxxxxxxxxx",   // 广告续命 - 加步数（预留，接入正式广告时替换）
+    "adunit-xxxxxxxxxxxxxxxx",   // 道具 - 破冰锤（预留，接入正式广告时替换）
 ]
 
 

@@ -7,6 +7,8 @@ export namespace VideoEnum {
         Prop_Refresh = 1,
         /** 广告续命 - 步数耗尽加步（看广告 +5步） */
         Prop_Steps = 2,
+        /** 道具 - 破冰锤（看广告 +1） */
+        Prop_Hammer = 3,
     }
 
     export enum CustomVideo {

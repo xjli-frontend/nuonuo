@@ -78,6 +78,7 @@ export const GameConfig = {
   // ========== 游戏机制设置 ==========
   GUIDE_LEVELS: 3,           // 引导关卡数（前 N 关显示路径高亮）
   MAX_STACK_LAYERS: 3,       // 一个格子最多堆叠层数
+  MAX_UNDO_HISTORY: 100,     // 撤销快照最大保留步数（超出丢弃最旧，避免内存无限累积）
 
   // ========== 字体设置 ==========
   FONT_FAMILY: 'Arial, "Microsoft YaHei", sans-serif',
@@ -96,6 +97,13 @@ export const GameConfig = {
   COLOR_BUTTON_BG: '#e94560', // 按钮底色
   COLOR_BUTTON_TEXT: '#ffffff', // 按钮文字色
 
+  // ========== 引导 / 对话系统（已停用 2026-09-05） ==========
+  // COLOR_TUTORIAL_TEXT: '#875E2D',
+  // COLOR_TUTORIAL_HL_BG: 'rgba(255, 206, 84, 0.55)',
+  // COLOR_TUTORIAL_HAND_LINE: '#875E2D',
+  // PROMPTBOX_ASPECT: 514 / 293,
+  // CHARACTER_ASPECT: 231 / 308,
+
   // ========== 关卡 HUD 设置 ==========
   HUD_HEIGHT: 44,            // 顶部信息栏高度（px）
   HUD_PADDING: 10,           // HUD 内边距
@@ -107,6 +115,22 @@ export const GameConfig = {
   INITIAL_ITEMS: {
     undo: 3,     // 初始撤回道具数量
     refresh: 3,  // 初始刷新道具数量
+    hammer: 3,   // 初始破冰锤数量（敲碎冰块恢复原机制）
     // 预留扩展示例：coins: 0,  // 初始金币
+  },
+
+  // ========== 广告限额配置（每关） ==========
+  // 每关通过看广告获得救济的次数上限：
+  // - steps:   看广告 +5 步（步数耗尽时触发），每关限 1 次
+  // - undo:    看广告换撤销道具（道具用尽时点击触发），每关限 3 次
+  // - refresh: 看广告换刷新道具（道具用尽时点击触发），每关限 3 次
+  // - hammer:  看广告换破冰锤（道具用尽时点击触发），每关限 3 次，每次 +1
+  // 设计意图：广告救济是"有限的兜底"，不能让玩家靠无限看广告绝对通关，
+  // 否则关卡失去解谜意义；同时单关广告次数受限也保护玩家体验。
+  AD_LIMITS: {
+    steps: 1,
+    undo: 3,
+    refresh: 3,
+    hammer: 3,
   },
 };

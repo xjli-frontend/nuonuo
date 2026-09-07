@@ -3,6 +3,7 @@ import { WeChatPlatHelper } from "./WeChatPlatHelper";
 import { VideoEnum } from "../enum/VideoEnum";
 import { PostMessageObj, ShareType } from "../enum/GameEnum";
 import { ReportEnum } from "../enum/ReportEnum";
+import { gameState } from "../nuonuo/core/GameState";
 // 声明wx类型
 declare const wx: any;
 
@@ -87,13 +88,6 @@ export class PlatHelper {
         }
     }
 
-    /** 震动 */
-    static vibrateShort() {
-        if (this.isWX) {
-            WeChatPlatHelper.vibrateShort();
-        }
-    }
-
     /** 微信小游戏*/
     static get isWX(): boolean {
         return window["wx"] && !window["qq"] && !window["tt"];
@@ -113,6 +107,22 @@ export class PlatHelper {
     static GameClubButtonShowHide(isshow: boolean) {
         if (this.isWX) {
             WeChatPlatHelper.GameClubButtonShowHide(isshow)
+        }
+    }
+
+    /** 短震动（轻震：回弹/归位/敲冰等轻微反馈；震动开关关闭时不震，对齐源工程 VibrationManager） */
+    static vibrateShort() {
+        if (!gameState.vibrationEnabled) return;
+        if (this.isWX) {
+            WeChatPlatHelper.vibrateShort();
+        }
+    }
+
+    /** 长震动（重震：通关等重要事件；震动开关关闭时不震） */
+    static vibrateLong() {
+        if (!gameState.vibrationEnabled) return;
+        if (this.isWX) {
+            WeChatPlatHelper.vibrateLong();
         }
     }
 

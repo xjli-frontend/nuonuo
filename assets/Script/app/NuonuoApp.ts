@@ -20,6 +20,7 @@ import { getStorageAdapter } from '../nuonuo/core/Storage';
 import { TOTAL_LEVELS } from '../nuonuo/config/LevelConfig';
 import { PlatHelper } from '../util/PlatHelper';
 import { VideoEnum } from '../enum/VideoEnum';
+import { SoundManager, SfxName } from './SoundManager';
 
 type RGB = [number, number, number];
 
@@ -56,9 +57,10 @@ export default class NuonuoApp extends Component {
     private hudSteps: Label = null;
     private hudProgress: Label = null;
 
-    // 底部「撤销 / 刷新」道具按钮节点（道具数量变化后重绘图标与角标）
+    // 底部「撤销 / 刷新 / 破冰锤」道具按钮节点（道具数量变化后重绘图标与角标）
     private undoBtnNode: Node = null;
     private refreshBtnNode: Node = null;
+    private hammerBtnNode: Node = null;
 
     // 每日奖励弹窗内的「领取按钮 / 当前背包」文字（领取后刷新）
     private dailyClaimLabel: Label = null;
@@ -73,6 +75,9 @@ export default class NuonuoApp extends Component {
         // 兜底重读存档：引擎预览里模块求值顺序不保证，GameState 可能早于存储适配器注入就被
         // 构造（读到内存空存档）；此刻 Main 的首个 import（NuonuoBootstrap）必已执行，重读拿真实存档
         gameState.reload();
+        // 音频：挂在 NuonuoApp 节点下（零 prefab，运行时构建）；全场景统一主题 BGM（对齐源工程）
+        SoundManager.instance.init(this.node);
+        SoundManager.instance.playBgm('theme');
         this.showMenu();
     }
 
@@ -121,6 +126,9 @@ export default class NuonuoApp extends Component {
             this.btn(root, "btn_select", "选关（测试）", -300, -560, 160, 60, C_BLUE, () => this.showLevelSelect());
         }
 
+        // 设置按钮（左上角）：打开设置弹窗（音乐/音效/震动三开关，对齐源工程菜单设置入口）
+        this.loadLevelSprite(root, "btn_setting", 85, 79, -330, 610, () => this.showSettingsPopup());
+
         this.show(root);
 
         // 微信小游戏：在排行榜按钮位置盖官方「游戏圈」原生按钮（非微信平台空操作）；
@@ -133,6 +141,44 @@ export default class NuonuoApp extends Component {
         // TODO: 排行榜
     }
 
+    /** 设置弹窗（音乐/音效/震动三开关，对齐源工程 SceneMenu 设置弹窗） */
+    private showSettingsPopup(): void {
+        // 弹窗叠在菜单上，原生游戏圈按钮仍可点（BlockInputEvents 挡不住原生层），先隐藏
+        PlatHelper.GameClubButtonShowHide(false);
+        const overlay = new Node("settings");
+        overlay.layer = this.node.layer;
+        this.node.addChild(overlay);
+        overlay.setPosition(0, 0, 0);
+        const vs = this.visSize();
+        overlay.addComponent(UITransform).setContentSize(vs.width, vs.height);
+        const g = overlay.addComponent(Graphics);
+        g.fillColor = this.makeColor([0, 0, 0], 140); // rgba(0,0,0,0.55)
+        g.rect(-vs.width / 2, -vs.height / 2, vs.width, vs.height);
+        g.fill();
+        overlay.addComponent(BlockInputEvents);
+
+        // 面板（源工程 #1a2c52）
+        const panel = this.panel(overlay, "panel", 0, 0, 560, 500, [26, 44, 82]);
+        this.label(panel, "title", "设置", 44, 0, 210);
+
+        // 音乐 / 音效 / 震动 三开关（文字随状态刷新）
+        const musicBtn = this.btn(panel, "btn_music", "", 0, 100, 440, 76, C_WHITE, () => this.doToggle('music', musicBtn, false), 64);
+        const sfxBtn = this.btn(panel, "btn_sfx", "", 0, 0, 440, 76, C_WHITE, () => this.doToggle('sfx', sfxBtn, false), 64);
+        const vibBtn = this.btn(panel, "btn_vib", "", 0, -100, 440, 76, C_WHITE, () => this.doToggle('vibration', vibBtn, false), 64);
+        this.refreshToggleLabel(musicBtn, 'music');
+        this.refreshToggleLabel(sfxBtn, 'sfx');
+        this.refreshToggleLabel(vibBtn, 'vibration');
+
+        // 底部说明
+        this.label(panel, "hint", "音乐、音效与震动可分别开关", 22, 0, -200, C_SUBTEXT);
+
+        // 右上角关闭（关弹窗回到菜单，恢复显示游戏圈按钮）
+        this.btn(panel, "close", "✕", 250, 210, 56, 56, C_WHITE, () => {
+            overlay.destroy();
+            PlatHelper.GameClubButtonShowHide(true);
+        }, 64);
+    }
+
     // ========== 选关页 ==========
 
     private showLevelSelect(): void {
@@ -142,13 +188,13 @@ export default class NuonuoApp extends Component {
         this.label(root, "title", "选择关卡", 56, 0, 600);
         this.btn(root, "btn_back", "← 返回", -280, 600, 180, 80, C_GOLD, () => this.showMenu());
 
-        // 5 列网格，纵向滚动展示全部 100 关
+        // 5 列网格，纵向滚动展示全部关卡（关卡数随源工程 LevelConfig 变化，按 TOTAL_LEVELS 自适应）
         const cols = 5;
         const cell = 130;
         const gap = 12;
         const gridW = cols * cell + (cols - 1) * gap;          // 698
-        const rows = Math.ceil(TOTAL_LEVELS / cols);            // 20
-        const contentH = rows * cell + (rows - 1) * gap;        // 2828
+        const rows = Math.ceil(TOTAL_LEVELS / cols);
+        const contentH = rows * cell + (rows - 1) * gap;
 
         const content = this.makeScroll(root, 0, -20, gridW + 20, 1080, gridW, contentH);
 
@@ -164,6 +210,7 @@ export default class NuonuoApp extends Component {
             // 未解锁关卡：测试模式（SELECT_ALLOW_LOCKED）下也可点，正式流程则拦截
             if (unlocked || SELECT_ALLOW_LOCKED) {
                 c.on(Node.EventType.TOUCH_END, () => {
+                    SoundManager.instance.playSfx('ui_tap');
                     // 选关即记录进度（直接写 maxUnlockedLevel）：刷新游戏后「开始」仍回到这关
                     gameState.setUnlockedLevel(lv);
                     this.startGame(lv);
@@ -201,14 +248,19 @@ export default class NuonuoApp extends Component {
         game.onHud = (h) => this.updateHud(h);
         game.onTip = (t) => this.toast(t);
         game.onResult = (r) => this.showResult(r);
+        game.onSfx = (name) => SoundManager.instance.playSfx(name as SfxName);
+        game.onVibrate = (kind) => kind === 'short' ? PlatHelper.vibrateShort() : PlatHelper.vibrateLong();
+        game.onHammerModeChange = () => this.updatePropButtons();   // 敲冰中标识随模式刷新
         game.play(level);
 
-        // 底部底板（static_bg）：撤销 / 刷新道具按钮
+        // 底部底板（static_bg）：撤销 / 刷新 / 破冰锤道具按钮
         const bottomPlate = this.loadPlate(root, 590, 168, 0, -515);
         this.undoBtnNode = null;
         this.refreshBtnNode = null;
-        this.undoBtnNode = this.makePropButton(bottomPlate, 'undo', -140, 0);
-        this.refreshBtnNode = this.makePropButton(bottomPlate, 'refresh', 140, 0);
+        this.hammerBtnNode = null;
+        this.undoBtnNode = this.makePropButton(bottomPlate, 'undo', -180, 0);
+        this.refreshBtnNode = this.makePropButton(bottomPlate, 'refresh', 0, 0);
+        this.hammerBtnNode = this.makePropButton(bottomPlate, 'hammer', 180, 0);
         this.updatePropButtons();
 
         this.show(root);
@@ -222,6 +274,7 @@ export default class NuonuoApp extends Component {
 
     private pauseGame(): void {
         if (!this._screen) return;
+        SoundManager.instance.playSfx('ui_popup');   // 暂停弹窗打开音（对齐源工程 pause()）
         const mask = new Node("pauseMask");
         mask.layer = this._screen.layer;
         this._screen.addChild(mask);
@@ -234,47 +287,122 @@ export default class NuonuoApp extends Component {
         g.fill();
         mask.addComponent(BlockInputEvents);
 
-        this.label(mask, "pauseTxt", "已暂停", 64, 0, 160);
-        this.btn(mask, "btn_resume", "继续", 0, -40, 320, 110, C_PRIMARY, () => mask.destroy());
-        this.btn(mask, "btn_restart", "重开", 0, -180, 320, 90, C_BLUE, () => {
+        this.label(mask, "pauseTxt", "已暂停", 64, 0, 180);
+        this.btn(mask, "btn_resume", "继续", 0, 60, 320, 100, C_PRIMARY, () => mask.destroy());
+        this.btn(mask, "btn_restart", "重开", 0, -60, 320, 90, C_BLUE, () => {
             mask.destroy();
             this._game.restart();
         });
-        this.btn(mask, "btn_back", "返回主页", 0, -300, 320, 90, C_GOLD, () => {
+        // 音乐 / 音效 / 震动 三开关（对齐源工程暂停弹窗；文字随状态刷新）
+        const musicBtn = this.btn(mask, "btn_music", "", -110, -190, 100, 70, C_WHITE, () => this.doToggle('music', musicBtn, true), 77);
+        const sfxBtn = this.btn(mask, "btn_sfx", "", 0, -190, 100, 70, C_WHITE, () => this.doToggle('sfx', sfxBtn, true), 77);
+        const vibBtn = this.btn(mask, "btn_vib", "", 110, -190, 100, 70, C_WHITE, () => this.doToggle('vibration', vibBtn, true), 77);
+        this.refreshToggleLabel(musicBtn, 'music');
+        this.refreshToggleLabel(sfxBtn, 'sfx');
+        this.refreshToggleLabel(vibBtn, 'vibration');
+        this.btn(mask, "btn_back", "返回主页", 0, -310, 320, 90, C_GOLD, () => {
             mask.destroy();
             this.showMenu();
         });
     }
 
+    /** 音乐 / 音效 / 震动开关（pauseMode=true 暂停面板，false 菜单设置弹窗；音效/反馈对齐源工程两处差异） */
+    private doToggle(kind: 'music' | 'sfx' | 'vibration', btnNode: Node, pauseMode: boolean): void {
+        if (kind === 'music') {
+            gameState.toggleMusic();
+            SoundManager.instance.onMusicToggle();
+            if (pauseMode) {
+                // 暂停面板：音乐被关掉时用音效提示（音效还开着才听得到）
+                if (!gameState.musicEnabled) SoundManager.instance.playSfx('toggle_off');
+            } else {
+                // 菜单设置弹窗：音乐被打开时播开音
+                if (gameState.musicEnabled) SoundManager.instance.playSfx('toggle_on');
+            }
+        } else if (kind === 'sfx') {
+            gameState.toggleSfx();
+            if (gameState.sfxEnabled) SoundManager.instance.playSfx('toggle_on');
+        } else {
+            gameState.toggleVibration();
+            // 打开震动时立即给一次短震，让玩家确认震动功能已开启（关着时 PlatHelper 内部拦截不震）
+            PlatHelper.vibrateShort();
+        }
+        this.refreshToggleLabel(btnNode, kind);
+    }
+
+    /** 更新开关按钮文字（音乐：开/关 等） */
+    private refreshToggleLabel(btnNode: Node, kind: 'music' | 'sfx' | 'vibration'): void {
+        const lab = btnNode.getChildByName("Label")?.getComponent(Label);
+        if (!lab) return;
+        const on = kind === 'music' ? gameState.musicEnabled : kind === 'sfx' ? gameState.sfxEnabled : gameState.vibrationEnabled;
+        const name = kind === 'music' ? '音乐' : kind === 'sfx' ? '音效' : '震动';
+        lab.string = `${name} ${on ? '开' : '关'}`;
+    }
+
     // ========== 道具系统（撤销/刷新消耗全局道具 + 看广告补道具 + 每日奖励） ==========
 
-    /** 点击撤销：有道具则扣 1 个并撤销；无道具则引导看广告 */
+    /** 点击撤销：有道具则扣 1 个并撤销；无道具则本关广告次数内看广告换取（对齐源工程 onUndoClick） */
     private onUndo(): void {
         if (gameState.undoItems > 0) {
             if (this._game.undo()) {
                 gameState.useUndoItem();
                 this.updatePropButtons();
             }
-        } else {
+        } else if (gameState.hasAdUndoLeft) {
             this.requestItemByAd('undo');
+        } else {
+            SoundManager.instance.playSfx('invalid');
+            this.toast('本关看广告换撤销次数已用完');
         }
     }
 
-    /** 点击刷新：有道具则扣 1 个并刷新；无道具则引导看广告 */
+    /** 点击刷新：有道具则扣 1 个并刷新；无道具则本关广告次数内看广告换取（对齐源工程 onRefreshClick） */
     private onRefresh(): void {
         if (gameState.refreshItems > 0) {
             gameState.useRefreshItem();
             this._game.refresh();
             this.updatePropButtons();
             this.toast(`已刷新，剩余刷新道具 ${gameState.refreshItems} 个`);
-        } else {
+        } else if (gameState.hasAdRefreshLeft) {
             this.requestItemByAd('refresh');
+        } else {
+            SoundManager.instance.playSfx('invalid');
+            this.toast('本关看广告换刷新次数已用完');
         }
     }
 
+    /** 点击破冰锤按钮：进入/退出「选择冰块」模式（对齐源工程 onHammerClick） */
+    private onHammerClick(): void {
+        // 已进入破冰模式 → 再点退出
+        if (this._game.hammerMode) {
+            this._game.hammerMode = false;
+            this.toast('已退出破冰');
+            return;
+        }
+        // 本关没有冰块
+        if (!this._game.hasIce()) {
+            SoundManager.instance.playSfx('invalid');
+            this.toast('本关没有冰块');
+            return;
+        }
+        // 破冰锤用完：本关还有看广告换破冰锤次数 → 弹广告换取（看一次 +1）；用完则提示
+        if (gameState.hammerItems <= 0) {
+            if (gameState.hasAdHammerLeft) {
+                this.requestItemByAd('hammer');
+            } else {
+                SoundManager.instance.playSfx('invalid');
+                this.toast('本关看广告换破冰锤次数已用完');
+            }
+            return;
+        }
+        this._game.hammerMode = true;
+        this.toast('请点击要敲碎的冰块');
+    }
+
     /** 看广告获取道具：微信走激励视频广告，非微信环境直接放发（对齐 PlatHelper.playVideo 的约定） */
-    private requestItemByAd(type: 'undo' | 'refresh'): void {
-        const slot = type === 'undo' ? VideoEnum.RewardedVideo.Prop_Undo : VideoEnum.RewardedVideo.Prop_Refresh;
+    private requestItemByAd(type: 'undo' | 'refresh' | 'hammer'): void {
+        const slot = type === 'undo' ? VideoEnum.RewardedVideo.Prop_Undo
+            : type === 'refresh' ? VideoEnum.RewardedVideo.Prop_Refresh
+            : VideoEnum.RewardedVideo.Prop_Hammer;
         PlatHelper.playVideo((success: boolean) => {
             if (success) {
                 this.grantItemByAd(type);
@@ -284,25 +412,35 @@ export default class NuonuoApp extends Component {
         }, slot);
     }
 
-    /** 广告观看完毕，发放对应道具（撤回+3 / 刷新+1，对齐原版 grantItemByAd） */
-    private grantItemByAd(type: 'undo' | 'refresh'): void {
+    /** 广告观看完毕，发放对应道具并记录本关广告次数（撤回+3 / 刷新+1 / 破冰锤+1，对齐源工程 grantItemByAd） */
+    private grantItemByAd(type: 'undo' | 'refresh' | 'hammer'): void {
+        SoundManager.instance.playSfx('ad_reward');
         if (type === 'undo') {
-            gameState.addUndoItems(3);
+            gameState.recordAdUndo();    // 记录本关看广告换撤销次数
+            gameState.addUndoItems(3);   // 看一次广告获得 3 个撤回道具
             this.toast('已获得撤回道具 ×3');
-        } else {
+        } else if (type === 'refresh') {
+            gameState.recordAdRefresh(); // 记录本关看广告换刷新次数
             gameState.addRefreshItems(1);
             this.toast('已获得刷新道具 ×1');
+        } else {
+            gameState.recordAdHammer();  // 记录本关看广告换破冰锤次数
+            gameState.addHammerItems(1);
+            this.toast('已获得破冰锤 ×1');
         }
         this.updatePropButtons();
     }
 
-    /** 刷新撤销/刷新道具按钮：有道具显示道具图+数量角标，无道具显示广告按钮 */
+    /** 刷新撤销/刷新/破冰锤道具按钮：有道具显示道具图+数量角标，无道具显示广告按钮 */
     private updatePropButtons(): void {
         if (this.undoBtnNode && this.undoBtnNode.isValid) {
             this.applyPropVisual(this.undoBtnNode, gameState.undoItems, 'btn_cancel');
         }
         if (this.refreshBtnNode && this.refreshBtnNode.isValid) {
             this.applyPropVisual(this.refreshBtnNode, gameState.refreshItems, 'btn_refresh');
+        }
+        if (this.hammerBtnNode && this.hammerBtnNode.isValid) {
+            this.applyHammerVisual(this.hammerBtnNode);
         }
     }
 
@@ -394,6 +532,7 @@ export default class NuonuoApp extends Component {
         } catch (e) { /* 忽略 */ }
         gameState.addUndoItems(3);
         gameState.addRefreshItems(3);
+        SoundManager.instance.playSfx('reward');   // 领取成功音（对齐源工程菜单领取每日奖励）
         this.toast('领取成功！撤回×3、刷新×3 已到账');
         this.updatePropButtons();
         // 移除菜单「每日奖励」按钮上的红点（领取后及时刷新，避免残留）
@@ -422,6 +561,7 @@ export default class NuonuoApp extends Component {
             const continueBtn = this.loadSprite(overlay, 'result', 'btn_continue', 461, 131, 0, -305, null);
             continueBtn.on(Node.EventType.TOUCH_END, (e: any) => {
                 e.propagationStopped = true;   // 阻止冒泡到「点击空白返回首页」
+                SoundManager.instance.playSfx('ui_tap');
                 overlay.destroy();
                 if (r.hasNext) this.startGame(r.level + 1);   // 继续游戏 → 下一关
                 else this.showMenu();
@@ -487,6 +627,7 @@ export default class NuonuoApp extends Component {
      * 「看广告 +5步」按钮用 btn_video 贴图放大 + 文字，剩余次数实时显示；「放弃」进失败结算
      */
     private showStepLimitPopup(r: ResultData): void {
+        SoundManager.instance.playSfx('ui_popup');   // 续命弹窗打开音（对齐源工程）
         const overlay = this.makeOverlay("stepLimit");
 
         // 面板（源工程 #1a1a2e）
@@ -507,7 +648,10 @@ export default class NuonuoApp extends Component {
         ag.fill();
         this.loadSprite(adBtn, 'static', 'btn_video', 44, 45, -88, 0, null);
         this.label(adBtn, "adText", "看广告 +5步", 30, 28, 0, C_WHITE, 190);
-        adBtn.on(Node.EventType.TOUCH_END, () => this.watchAdForSteps(overlay), this);
+        adBtn.on(Node.EventType.TOUCH_END, () => {
+            SoundManager.instance.playSfx('ui_tap');
+            this.watchAdForSteps(overlay);
+        }, this);
         this.pressScale(adBtn);
 
         // 放弃 → 清掉续命弹窗内容，原地转成失败结算（源工程 giveUpLevel）
@@ -521,6 +665,7 @@ export default class NuonuoApp extends Component {
     private watchAdForSteps(overlay: Node): void {
         PlatHelper.playVideo((success: boolean) => {
             if (success) {
+                SoundManager.instance.playSfx('ad_reward');
                 gameState.recordAdStep();
                 this._game.addSteps(5);
                 overlay.destroy();
@@ -560,7 +705,10 @@ export default class NuonuoApp extends Component {
         const uITransform = n.addComponent(UITransform);
         uITransform.setContentSize(w, h);
         if (cb) {
-            n.on(Node.EventType.TOUCH_END, () => cb(), this);
+            n.on(Node.EventType.TOUCH_END, () => {
+                SoundManager.instance.playSfx('ui_tap');
+                cb();
+            }, this);
             this.pressScale(n);
         }
         // 注意按 spriteFrame 子资源加载：nuonuo/ 下有 auto-atlas 自动图集，
@@ -625,14 +773,19 @@ export default class NuonuoApp extends Component {
         return n;
     }
 
-    /** 创建道具按钮容器（撤销/刷新）：固定尺寸+点击+缩放，内容由 applyPropVisual 重绘 */
-    private makePropButton(parent: Node, kind: 'undo' | 'refresh', x: number, y: number): Node {
+    /** 创建道具按钮容器（撤销/刷新/破冰锤）：固定尺寸+点击+缩放，内容由 applyPropVisual/applyHammerVisual 重绘 */
+    private makePropButton(parent: Node, kind: 'undo' | 'refresh' | 'hammer', x: number, y: number): Node {
         const n = new Node(`btn_${kind}`);
         n.layer = parent.layer;
         parent.addChild(n);
         n.setPosition(x, y, 0);
         n.addComponent(UITransform).setContentSize(120, 123);
-        n.on(Node.EventType.TOUCH_END, kind === 'undo' ? () => this.onUndo() : () => this.onRefresh(), this);
+        n.on(Node.EventType.TOUCH_END, () => {
+            SoundManager.instance.playSfx('ui_tap');
+            if (kind === 'undo') this.onUndo();
+            else if (kind === 'refresh') this.onRefresh();
+            else this.onHammerClick();
+        }, this);
         this.pressScale(n);
         return n;
     }
@@ -645,6 +798,28 @@ export default class NuonuoApp extends Component {
             this.numBadge(node, count, 48, 50);
         } else {
             this.loadSprite(node, 'static', 'btn_video', 44, 44, 48, 50, null);
+        }
+    }
+
+    /** 重绘破冰锤按钮：btn_hammer 贴图（与撤销/刷新同 loadSprite 管线，无占位）；有道具 → 数量角标；无道具 → 广告图标；敲冰中 → 黄描边标识（对齐源工程「敲冰中」文字） */
+    private applyHammerVisual(node: Node): void {
+        node.removeAllChildren();
+        this.loadSprite(node, 'level', 'btn_hammer', 120, 123, 0, 0, null);
+        if (gameState.hammerItems > 0) {
+            this.numBadge(node, gameState.hammerItems, 48, 50);
+        } else {
+            this.loadSprite(node, 'static', 'btn_video', 44, 44, 48, 50, null);
+        }
+        if (this._game && this._game.hammerMode) {
+            const ring = new Node("ring");
+            ring.layer = node.layer;
+            node.addChild(ring);
+            ring.addComponent(UITransform).setContentSize(120, 123);
+            const rg = ring.addComponent(Graphics);
+            rg.lineWidth = 3;
+            rg.strokeColor = new Color(...C_GOLD, 255);
+            rg.roundRect(-60, -62, 120, 123, 16);
+            rg.stroke();
         }
     }
 
@@ -752,7 +927,10 @@ export default class NuonuoApp extends Component {
         lab.horizontalAlign = Label.HorizontalAlign.CENTER;
         lab.verticalAlign = Label.VerticalAlign.CENTER;
 
-        n.on(Node.EventType.TOUCH_END, () => cb(), this);
+        n.on(Node.EventType.TOUCH_END, () => {
+            SoundManager.instance.playSfx('ui_tap');
+            cb();
+        }, this);
         this.pressScale(n);
         return n;
     }

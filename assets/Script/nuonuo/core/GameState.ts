@@ -29,7 +29,10 @@ export class GameState {
     this.data = {
       currentLevel: 1,
       maxUnlockedLevel: 1,  // 第一关默认解锁
-      soundEnabled: true,
+      musicEnabled: true,   // 背景音乐开关
+      sfxEnabled: true,     // 音效开关
+      vibrationEnabled: true, // 震动开关
+      soundEnabled: true,   // 旧版统一开关（仅存档兼容）
       moveCount: 0,
       itemsPlaced: 0,
       totalItems: 0,
@@ -41,9 +44,16 @@ export class GameState {
       maxSteps: null,
       undoItems: GameConfig.INITIAL_ITEMS.undo,
       refreshItems: GameConfig.INITIAL_ITEMS.refresh,
+      hammerItems: GameConfig.INITIAL_ITEMS.hammer,
       levelRefreshSpent: 0,
       adStepsUsed: 0,
-      maxAdSteps: 3,
+      maxAdSteps: GameConfig.AD_LIMITS.steps,
+      adUndoUsed: 0,
+      adUndoMax: GameConfig.AD_LIMITS.undo,
+      adRefreshUsed: 0,
+      adRefreshMax: GameConfig.AD_LIMITS.refresh,
+      adHammerUsed: 0,
+      adHammerMax: GameConfig.AD_LIMITS.hammer,
     };
     // 从本地存储加载数据（如果有的话）
     this.loadFromStorage();
@@ -64,8 +74,17 @@ export class GameState {
   /** 获取已解锁最高关卡 */
   get maxUnlockedLevel(): number { return this.data.maxUnlockedLevel; }
 
+  /** 背景音乐是否开启 */
+  get musicEnabled(): boolean { return this.data.musicEnabled; }
+
   /** 音效是否开启 */
-  get soundEnabled(): boolean { return this.data.soundEnabled; }
+  get sfxEnabled(): boolean { return this.data.sfxEnabled; }
+
+  /** 震动是否开启 */
+  get vibrationEnabled(): boolean { return this.data.vibrationEnabled; }
+
+  /** 【兼容】旧版统一开关：音乐与音效同时开启才为 true */
+  get soundEnabled(): boolean { return this.data.musicEnabled && this.data.sfxEnabled; }
 
   /** 当前关卡移动次数 */
   get moveCount(): number { return this.data.moveCount; }
@@ -109,6 +128,9 @@ export class GameState {
   /** 【每日奖励】全局刷新道具数量 */
   get refreshItems(): number { return this.data.refreshItems; }
 
+  /** 【破冰锤】全局破冰锤道具数量 */
+  get hammerItems(): number { return this.data.hammerItems; }
+
   /** 【每日奖励】本关消耗的刷新道具数（结算统计用） */
   get levelRefreshSpent(): number { return this.data.levelRefreshSpent; }
 
@@ -126,6 +148,54 @@ export class GameState {
   /** 【广告续命】本关是否还能看广告加步数 */
   get hasAdStepsLeft(): boolean {
     return this.data.maxSteps !== null && this.adStepsLeft > 0;
+  }
+
+  /** 【广告续命】本关已看广告换撤销道具次数 */
+  get adUndoUsed(): number { return this.data.adUndoUsed; }
+
+  /** 【广告续命】本关可看广告换撤销道具上限 */
+  get adUndoMax(): number { return this.data.adUndoMax; }
+
+  /** 【广告续命】本关剩余可看广告换撤销道具次数 */
+  get adUndoLeft(): number {
+    return Math.max(0, this.data.adUndoMax - this.data.adUndoUsed);
+  }
+
+  /** 【广告续命】本关是否还能看广告换撤销道具 */
+  get hasAdUndoLeft(): boolean {
+    return this.adUndoLeft > 0;
+  }
+
+  /** 【广告续命】本关已看广告换刷新道具次数 */
+  get adRefreshUsed(): number { return this.data.adRefreshUsed; }
+
+  /** 【广告续命】本关可看广告换刷新道具上限 */
+  get adRefreshMax(): number { return this.data.adRefreshMax; }
+
+  /** 【广告续命】本关剩余可看广告换刷新道具次数 */
+  get adRefreshLeft(): number {
+    return Math.max(0, this.data.adRefreshMax - this.data.adRefreshUsed);
+  }
+
+  /** 【广告续命】本关是否还能看广告换刷新道具 */
+  get hasAdRefreshLeft(): boolean {
+    return this.adRefreshLeft > 0;
+  }
+
+  /** 【广告续命】本关已看广告换破冰锤次数 */
+  get adHammerUsed(): number { return this.data.adHammerUsed; }
+
+  /** 【广告续命】本关可看广告换破冰锤上限 */
+  get adHammerMax(): number { return this.data.adHammerMax; }
+
+  /** 【广告续命】本关剩余可看广告换破冰锤次数 */
+  get adHammerLeft(): number {
+    return Math.max(0, this.data.adHammerMax - this.data.adHammerUsed);
+  }
+
+  /** 【广告续命】本关是否还能看广告换破冰锤 */
+  get hasAdHammerLeft(): boolean {
+    return this.adHammerLeft > 0;
   }
 
   // ========== 写入方法 ==========
@@ -150,18 +220,36 @@ export class GameState {
     }
   }
 
-  /** 【选关流程】直接把解锁进度设为指定关卡（选关页点选即存，重进游戏从这关续玩；通关进度仍走 unlockLevel 递增） */
-  setUnlockedLevel(level: number): void {
-    if (level >= 1 && level !== this.data.maxUnlockedLevel) {
-      this.data.maxUnlockedLevel = level;
-      this.saveToStorage();
-    }
+  /** 切换背景音乐开关 */
+  toggleMusic(): void {
+    this.data.musicEnabled = !this.data.musicEnabled;
+    this.data.soundEnabled = this.data.musicEnabled && this.data.sfxEnabled;
+    this.saveToStorage();
+    // 音频状态同步由宿主层负责（核心包无 AudioManager）
   }
 
   /** 切换音效开关 */
-  toggleSound(): void {
-    this.data.soundEnabled = !this.data.soundEnabled;
+  toggleSfx(): void {
+    this.data.sfxEnabled = !this.data.sfxEnabled;
+    this.data.soundEnabled = this.data.musicEnabled && this.data.sfxEnabled;
     this.saveToStorage();
+    // 音频状态同步由宿主层负责（核心包无 AudioManager）
+  }
+
+  /** 切换震动开关 */
+  toggleVibration(): void {
+    this.data.vibrationEnabled = !this.data.vibrationEnabled;
+    this.saveToStorage();
+  }
+
+  /** 【兼容】旧版统一开关：同时切换音乐与音效 */
+  toggleSound(): void {
+    const next = !(this.data.musicEnabled && this.data.sfxEnabled);
+    this.data.musicEnabled = next;
+    this.data.sfxEnabled = next;
+    this.data.soundEnabled = next;
+    this.saveToStorage();
+    // 音频状态同步由宿主层负责（核心包无 AudioManager）
   }
 
   /** 记录一次移动 */
@@ -248,6 +336,20 @@ export class GameState {
     return true;
   }
 
+  /** 增加全局破冰锤道具 */
+  addHammerItems(n: number): void {
+    this.data.hammerItems += n;
+    this.saveToStorage();
+  }
+
+  /** 消耗一个全局破冰锤道具（成功返回 true） */
+  useHammerItem(): boolean {
+    if (this.data.hammerItems <= 0) return false;
+    this.data.hammerItems--;
+    this.saveToStorage();
+    return true;
+  }
+
   /** 【广告续命】记录一次看广告加步数（调用前应先判断 hasAdStepsLeft） */
   recordAdStep(): void {
     if (this.data.adStepsUsed < this.data.maxAdSteps) {
@@ -255,9 +357,30 @@ export class GameState {
     }
   }
 
-  /** 【广告续命】设置本关看广告加步数上限（默认 3） */
+  /** 【广告续命】设置本关看广告加步数上限（默认见 GameConfig.AD_LIMITS.steps） */
   setMaxAdSteps(max: number): void {
     this.data.maxAdSteps = Math.max(0, max);
+  }
+
+  /** 【广告续命】记录一次看广告换撤销道具（调用前应先判断 hasAdUndoLeft） */
+  recordAdUndo(): void {
+    if (this.data.adUndoUsed < this.data.adUndoMax) {
+      this.data.adUndoUsed++;
+    }
+  }
+
+  /** 【广告续命】记录一次看广告换刷新道具（调用前应先判断 hasAdRefreshLeft） */
+  recordAdRefresh(): void {
+    if (this.data.adRefreshUsed < this.data.adRefreshMax) {
+      this.data.adRefreshUsed++;
+    }
+  }
+
+  /** 【广告续命】记录一次看广告换破冰锤（调用前应先判断 hasAdHammerLeft） */
+  recordAdHammer(): void {
+    if (this.data.adHammerUsed < this.data.adHammerMax) {
+      this.data.adHammerUsed++;
+    }
   }
 
   /** 暂停 */
@@ -270,9 +393,25 @@ export class GameState {
     this.data.isPaused = false;
   }
 
-  /** 记录一次移动（用于撤销） */
+  /** 记录一次移动（用于撤销），超过上限丢弃最旧快照，避免内存无限累积 */
   pushMove(record: MoveRecord): void {
     this.data.moveHistory.push(record);
+    const max = GameConfig.MAX_UNDO_HISTORY;
+    if (this.data.moveHistory.length > max) {
+      this.data.moveHistory.splice(0, this.data.moveHistory.length - max);
+    }
+  }
+
+  /** 清空移动历史（刷新/换关等场景，释放快照内存） */
+  clearMoveHistory(): void {
+    this.data.moveHistory = [];
+  }
+
+  /** 恢复本关移动相关计数（撤销用） */
+  restoreMoveState(moveCount: number, stepsUsed: number, itemsPlaced: number): void {
+    this.data.moveCount = moveCount;
+    this.data.stepsUsed = stepsUsed;
+    this.data.itemsPlaced = itemsPlaced;
   }
 
   /** 弹出最后一次移动记录 */
@@ -300,20 +439,33 @@ export class GameState {
     this.data.stepsUsed = 0;
     this.data.maxSteps = null;
     this.data.adStepsUsed = 0;
-    this.data.maxAdSteps = 3;
+    this.data.maxAdSteps = GameConfig.AD_LIMITS.steps;
+    this.data.adUndoUsed = 0;
+    this.data.adUndoMax = GameConfig.AD_LIMITS.undo;
+    this.data.adRefreshUsed = 0;
+    this.data.adRefreshMax = GameConfig.AD_LIMITS.refresh;
+    this.data.adHammerUsed = 0;
+    this.data.adHammerMax = GameConfig.AD_LIMITS.hammer;
   }
 
-  // ========== 本地存储 ==========
+  /** 【选关流程】直接把解锁进度设为指定关卡（选关页点选即存，重进游戏从这关续玩；通关进度仍走 unlockLevel 递增） */
+  setUnlockedLevel(level: number): void {
+    if (level >= 1 && level !== this.data.maxUnlockedLevel) {
+      this.data.maxUnlockedLevel = level;
+      this.saveToStorage();
+    }
+  }
 
   /**
    * 重新读取存档。
-   * 构造器里已读一次，但引擎预览的模块求值顺序不保证适配器已注入
+   * 构造器里已读一次，但宿主环境的模块求值顺序不保证存储适配器已注入
    * （GameState 可能早于宿主的存储注入模块被求值，读到内存空存档）；
    * 宿主 boot 时再显式调用一次即可兜底（见 NuonuoApp.boot）。
    */
   reload(): void {
     this.loadFromStorage();
   }
+  // ========== 本地存储 ==========
 
   /**
    * 从存储适配器加载存档（浏览器=localStorage，微信/Cocos=sys.localStorage，由宿主注入）
@@ -325,10 +477,16 @@ export class GameState {
       if (saved) {
         const parsed = JSON.parse(saved);
         this.data.maxUnlockedLevel = parsed.maxUnlockedLevel ?? 1;
-        this.data.soundEnabled = parsed.soundEnabled ?? true;
+        // 【v0.9.0 存档兼容】老存档只有统一的 soundEnabled，
+        // 迁移规则：优先读新的 musicEnabled/sfxEnabled，缺失则用老字段，都缺失则默认开启
+        this.data.musicEnabled = parsed.musicEnabled ?? parsed.soundEnabled ?? true;
+        this.data.sfxEnabled = parsed.sfxEnabled ?? parsed.soundEnabled ?? true;
+        this.data.vibrationEnabled = parsed.vibrationEnabled ?? true;
+        this.data.soundEnabled = this.data.musicEnabled && this.data.sfxEnabled;
         // 存档中无道具字段（新玩家/老版本存档）时，发放初始道具；已有值则尊重存档
         this.data.undoItems = parsed.undoItems ?? GameConfig.INITIAL_ITEMS.undo;
         this.data.refreshItems = parsed.refreshItems ?? GameConfig.INITIAL_ITEMS.refresh;
+        this.data.hammerItems = parsed.hammerItems ?? GameConfig.INITIAL_ITEMS.hammer;
       }
     } catch (e) {
       // 存储不可用时静默失败（如宿主未注入适配器）
@@ -341,9 +499,13 @@ export class GameState {
     try {
       getStorageAdapter().setItem('nuonuo_save', JSON.stringify({
         maxUnlockedLevel: this.data.maxUnlockedLevel,
-        soundEnabled: this.data.soundEnabled,
+        musicEnabled: this.data.musicEnabled,
+        sfxEnabled: this.data.sfxEnabled,
+        vibrationEnabled: this.data.vibrationEnabled,
+        soundEnabled: this.data.soundEnabled, // 保留旧字段，便于回退到旧版本
         undoItems: this.data.undoItems,
         refreshItems: this.data.refreshItems,
+        hammerItems: this.data.hammerItems,
       }));
     } catch (e) {
       console.warn('[GameState] 保存存档失败:', e);
