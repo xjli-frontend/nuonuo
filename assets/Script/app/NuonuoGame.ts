@@ -1031,8 +1031,10 @@ export default class NuonuoGame extends Component {
             if (cell) {
                 cell.type = CellType.ITEM;
                 cell.itemType = g.stack[0].type;
-                cell.layer = g.stack[0].layer;
-                cell.stack = g.stack.map(it => ({ type: it.type, layer: it.layer }));
+                // 层号必须归一化：moveItem 移走顶层后 stack 里残留 2,3… 的旧层号，
+                // 直接沿用会让 canDrag 判 cell.layer !== 1 → 刷新后该物品永久点不动
+                cell.layer = 1;
+                cell.stack = g.stack.map((it, i) => ({ type: it.type, layer: i + 1 }));
                 // 保留 portalId / freezeCounter / targetType 等附加属性（落点若在传送门/水洼/目标格上）
             }
         }
