@@ -1,0 +1,72 @@
+{
+    "package_version": 2,
+    "version": "1.0.0",
+    "name": "nuonuo-release",
+    "description": "i18n:nuonuo-release.description",
+    "author": "nuonuo",
+    "main": "./dist/main.js",
+    "panels": {
+        "default": {
+            "title": "i18n:nuonuo-release.panel_title",
+            "type": "dockable",
+            "main": "dist/panels/default",
+            "size": {
+                "min-width": 460,
+                "min-height": 420,
+                "width": 600,
+                "height": 680
+            }
+        }
+    },
+    "contributions": {
+        "menu": [
+            {
+                "path": "i18n:nuonuo-release.menu_title",
+                "label": "i18n:nuonuo-release.menu_open",
+                "message": "open-panel"
+            }
+        ],
+        "messages": {
+            "open-panel": {
+                "methods": [
+                    "openPanel"
+                ]
+            },
+            "get-state": {
+                "methods": [
+                    "getState"
+                ]
+            },
+            "probe-env": {
+                "methods": [
+                    "probeEnv"
+                ]
+            },
+            "build-and-upload": {
+                "methods": [
+                    "buildAndUpload"
+                ]
+            },
+            "build-only": {
+                "methods": [
+                    "buildOnly"
+                ]
+            },
+            "upload-only": {
+                "methods": [
+                    "uploadOnly"
+                ]
+            },
+            "remember-settings": {
+                "methods": [
+                    "rememberSettings"
+                ]
+            },
+            "open-build-dir": {
+                "methods": [
+                    "openBuildDir"
+                ]
+            }
+        }
+    }
+}

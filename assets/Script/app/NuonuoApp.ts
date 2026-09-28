@@ -42,6 +42,15 @@ const LEVEL_BG_MASK_ALPHA = 30;
 // 全屏底板/遮罩不按设计分辨率铺，统一用 view.getVisibleSize()（见 visSize）：
 // 真机宽高比与设计分辨率不同时可见区会扩展，固定 768×1344 会铺不满留边。
 
+// 菜单页顶部这一行：右上角「设置」按钮 + 左上角「金币」胶囊。
+// 两者共用同一条基线 TOP_ROW_Y、且左右边缘按 TOP_ROW_EDGE 对称镜像——改任何一项都要成对改，
+// 只动一边会立刻看出不齐（金币胶囊就是照设置按钮的位置对齐的）。
+const TOP_ROW_Y = 610;                              // 顶部元素的中心 y
+const SETTING_X = 330;                              // 设置按钮中心 x（偏右）
+const SETTING_W = 85;
+const SETTING_H = 79;
+const TOP_ROW_EDGE = SETTING_X + SETTING_W / 2;     // 372.5：设置按钮的右边缘 = 金币胶囊的左边缘
+
 // ========== 功能开关 ==========
 /**
  * 选关页是否允许选择未解锁关卡。
@@ -136,8 +145,9 @@ export default class NuonuoApp extends Component {
         this.coinBadge(root);
 
         // 设置按钮（右上角）：打开设置弹窗（音乐/音效/震动三开关）
-        // 【v0.13.0】原在左上角，为给「金币余额」腾位置移到右上角（对齐源工程）
-        this.loadLevelSprite(root, "btn_setting", 85, 79, 330, 610, () => this.showSettingsPopup());
+        // 【v0.13.0】原在左上角，为给「金币余额」腾位置移到右上角（对齐源工程）；
+        // 位置常量与左上角金币胶囊共用一套（见 TOP_ROW_*），别在这里写死数字
+        this.loadLevelSprite(root, "btn_setting", SETTING_W, SETTING_H, SETTING_X, TOP_ROW_Y, () => this.showSettingsPopup());
 
         this.show(root);
 
@@ -153,19 +163,20 @@ export default class NuonuoApp extends Component {
 
     /**
      * 【货币系统】左上角金币余额胶囊（对齐源工程 SceneMenu.renderCoinBadge，图标换 gold.png）。
-     * 胶囊宽度按数字位数自适应（图标区 34 + 数字 + 右侧留白 14），数量再多也不溢出；纯展示不可点。
+     * 位置照右上角设置按钮来：同一行基线 TOP_ROW_Y，左边缘与设置按钮的右边缘按 TOP_ROW_EDGE 镜像。
+     * 胶囊宽度按数字位数自适应（图标区 34 + 数字 + 右侧留白 14），**锚的是左边缘**——
+     * 所以金币再多胶囊也只往右长，不会往左顶出屏幕。纯展示不可点。
      */
     private coinBadge(parent: Node): Node {
         const text = `${gameState.coins}`;
         const h = 40;
         const numW = Math.max(26, text.length * 17);   // Cocos 无 measureText，按字号近似估宽
         const w = 34 + numW + 14;
-        const vs = this.visSize();
 
         const n = new Node("coinBadge");
         n.layer = parent.layer;
         parent.addChild(n);
-        n.setPosition(-vs.width / 2 + 16 + w / 2, vs.height / 2 - 16 - h / 2, 0);
+        n.setPosition(-TOP_ROW_EDGE + w / 2, TOP_ROW_Y, 0);
         n.addComponent(UITransform).setContentSize(w, h);
 
         const g = n.addComponent(Graphics);
@@ -609,7 +620,7 @@ export default class NuonuoApp extends Component {
     private showResult(r: ResultData): void {
         // 步数耗尽但本关还有金币续命次数 → 续命弹窗（对齐源工程 checkStepLimit），不进失败结算
         if (r.stepLimit) {
-            this.showStepLimitPopup(r);
+            this.showStepLimitPopup();
             return;
         }
         const overlay = this.makeOverlay("result");
@@ -768,9 +779,11 @@ export default class NuonuoApp extends Component {
 
     /**
      * 步数耗尽续命弹窗（对齐源工程 checkStepLimit / createStepLimitButtons / renderStepLimitPopup）：
-     * 消耗金币买步数、价格逐次递增（GameConfig.STEP_RESCUE_COSTS），次数用尽即走失败结算。
+     * 消耗金币买步数、价格逐次递增（GameConfig.STEP_RESCUE_COSTS）；
+     * ✕ = 放弃本关回主界面，重试 = 重开本关，加步数 = 扣金币续命。
+     * 次数用尽的判定在 NuonuoGame.checkEnd（canRescueSteps 为假时直接走失败结算），不会进到这里。
      */
-    private showStepLimitPopup(r: ResultData): void {
+    private showStepLimitPopup(): void {
         SoundManager.instance.playSfx('ui_popup');   // 续命弹窗打开音（对齐源工程）
         const overlay = this.makeOverlay("stepLimit");
 
@@ -814,10 +827,12 @@ export default class NuonuoApp extends Component {
         }, this);
         this.pressScale(buyBtn);
 
-        // 右上角关闭 = 放弃续命 → 清掉续命弹窗内容，原地转成失败结算（源工程 abandonAndGoHome）
+        // 右上角关闭 = 放弃本关 → 回主界面（对齐源工程 abandonAndGoHome）
+        // 注意 overlay 是挂在 this.node 下的（不在 _screen 里），show() 不会连带销毁它，
+        // 必须先自己 destroy，否则会留在菜单顶上把整屏点掉
         this.btn(panel, "close", "✕", 250, 196, 56, 56, C_WHITE, () => {
-            overlay.removeAllChildren();
-            this.buildFailUi(overlay, r);
+            overlay.destroy();
+            this.showMenu();
         }, 64);
     }
 
