@@ -17,13 +17,14 @@ export enum CellType {
   WATER = 'water',         // 水洼：倒计时归零后结冰变障碍物
   ICE = 'ice',             // 冰块：水洼结冰后的永久障碍物
   ONEWAY = 'oneway',       // 单向门：只能沿箭头方向进入/穿过，反向无法通过
-  BUTTON = 'button',       // 按钮：物品压住即触发，连接的活动墙/桥随之切换状态
-  ACTIVE_WALL = 'active_wall',   // 活动墙：默认实体阻挡，所连按钮按下时消失可通行
-  ACTIVE_BRIDGE = 'active_bridge', // 活动桥：默认虚体缺口不可通行，所连按钮按下时铺设可通行
+  BUTTON = 'button',       // 按钮：物品压住即触发，连接的活动门随之打开
+  ACTIVE_WALL = 'active_wall',   // 活动门（原「活动墙」）：默认关门阻挡，所连按钮被压住时开门可通行
+  ACTIVE_BRIDGE = 'active_bridge', // 旧「活动桥」：已并入活动门，仅保留以兼容历史关卡数据（编辑器不再提供该工具）
 }
 
-// ========== 活动屏障种类 ==========
-// 墙与桥互为镜像：墙默认阻挡→触发后通行；桥默认缺口→触发后通行
+// ========== 活动门种类（历史遗留字段 barrierKind） ==========
+// wall / bridge 曾互为镜像（墙=实体、桥=缺口），机制完全等价；现已统一表现为「活动门」，
+// 该字段只为兼容旧关卡数据而保留，渲染与判定不再区分（门由 barrierActive 决定开/关）。
 export type ActiveBarrierKind = 'wall' | 'bridge';
 
 // ========== 单向门方向 ==========
@@ -65,11 +66,12 @@ export interface CellData {
   freezeCounter?: number;  // 水洼结冰倒计时（归零后变冰块）
   placedCount?: number;    // 【v0.6.2】目标格已容纳的归位物品数（无限容量记账，0=未归位）
   onewayDir?: OnewayDirection; // 单向门方向：物品只能沿此方向进入；停在门格上后离开也仅允许沿此方向（v0.8.10 严格单向通道）
-  buttonId?: number;       // 按钮 ID：与受控的活动墙/桥共享同一 ID
+  buttonId?: number;       // 【v0.10.8】机关组 id：同组的按钮 + 活动门互相联动（组内任一按钮被压住 → 组内所有门打开）
   buttonPressed?: boolean; // 按钮是否处于按下态（物品压住时为 true）
-  barrierId?: number;      // 活动墙/桥 ID：与所连按钮共享同一 ID
-  barrierKind?: ActiveBarrierKind; // 活动墙/桥种类
-  barrierActive?: boolean; // 活动墙/桥是否处于激活态（墙激活=消失可通行；桥激活=铺设可通行）
+  barrierId?: number;      // 【v0.10.8】机关组 id：与同组的按钮共享（一个门可被同组多个按钮控制）
+  barrierKind?: ActiveBarrierKind; // 【历史兼容】活动门旧种类字段，渲染与判定已不再区分
+  barrierActive?: boolean; // 活动门是否处于激活态（true=开门可通行 / false=关门阻挡）
+  frozen?: boolean;        // 【v0.10.2】物品被冰封：水洼倒计时归零且物品仍在格子上 → 物品当场冻结，不可拖动（破冰锤解冻/撤销解救）
 }
 
 // ========== 关卡配置数据结构 ==========
@@ -91,14 +93,14 @@ export interface LevelConfig {
     pos: [number, number];    // 单向门位置 [row, col]
     dir: OnewayDirection;     // 通行方向：物品沿此方向进入；停在门格上后也只能沿此方向离开（v0.8.10 严格单向通道）
   }[];
-  buttons?: {                 // 按钮配置（可选，与活动墙/桥通过共享 id 配对）
-    id: number;               // 按钮 ID（与受控的活动墙/桥共享同一 ID）
+  buttons?: {                 // 按钮配置（可选，与同 id 的活动门归属同一个"机关组"）
+    id: number;               // 机关组 id（【v0.10.8】多对多：同组可有 x 个按钮 + y 个门；1~4 对应 4 套美术）
     pos: [number, number];    // 按钮位置 [row, col]
   }[];
-  activeBarriers?: {          // 活动墙/桥配置（可选，与按钮通过共享 id 配对）
-    id: number;               // 屏障 ID（与所连按钮共享同一 ID）
-    pos: [number, number];    // 屏障位置 [row, col]
-    kind: ActiveBarrierKind;  // wall=活动墙(默认阻挡) / bridge=活动桥(默认缺口)
+  activeBarriers?: {          // 活动门配置（可选，与同 id 的按钮归属同一个"机关组"）
+    id: number;               // 机关组 id（同组按钮任一被压住 → 本门开启；1~4 对应 4 套美术）
+    pos: [number, number];    // 活动门位置 [row, col]
+    kind: ActiveBarrierKind;  // 【历史兼容】保留该字段，新关卡统一写 'wall'
   }[];
   items: {                    // 物品列表
     type: ItemType;           // 物品类型
@@ -168,6 +170,7 @@ export interface GameStateData {
   musicEnabled: boolean;    // 背景音乐开关
   sfxEnabled: boolean;      // 音效开关
   vibrationEnabled: boolean; // 震动开关
+  tapMode: boolean;         // 【v0.13.3】操作模式：false=长按拖动（默认）/ true=点击选择
   soundEnabled: boolean;    // 旧版统一开关（仅存档兼容用，读取时用于迁移到上面两个开关）
   moveCount: number;        // 当前关卡移动次数（替代原 stepsUsed）
   itemsPlaced: number;      // 当前关卡已归位物品数
@@ -182,14 +185,22 @@ export interface GameStateData {
   undoItems: number;        // 【每日奖励】全局撤回道具数量（跨关卡）
   refreshItems: number;     // 【每日奖励】全局刷新道具数量（跨关卡）
   hammerItems: number;      // 【破冰锤】全局破冰锤道具数量（跨关卡），敲碎冰块恢复原机制
-  adStepsUsed: number;      // 【广告续命】本关已看广告加步数次数
-  maxAdSteps: number;       // 【广告续命】本关可看广告加步数上限（默认见 GameConfig.AD_LIMITS.steps）
+  // 【已停用·提示道具 2026-09-20】hintItems 随提示功能下线（旧存档中的该字段被忽略）
+  // hintItems: number;     // 【提示】全局提示道具数量（跨关卡），v0.12.0 起替换游戏内刷新入口
+  coins: number;              // 【货币·金币】玩家持有金币（跨关卡，写入存档）
+  coinRewardedLevels: number[]; // 【货币·金币】已发放过通关金币的关卡号（首次通关才发，防止重复刷同一关）
+  coinInitGranted: boolean;   // 【货币·金币】是否已发放过"新手金币"（保证 INITIAL_COINS 只发一次）
+  stepRescueUsed: number;   // 【步数续命】本关已用金币购买步数的次数
+  maxStepRescue: number;    // 【步数续命】本关可购买步数次数上限（= GameConfig.STEP_RESCUE_COSTS.length）
   adUndoUsed: number;       // 【广告续命】本关已看广告换撤销道具次数
   adUndoMax: number;        // 【广告续命】本关可看广告换撤销道具上限（默认见 GameConfig.AD_LIMITS.undo）
   adRefreshUsed: number;    // 【广告续命】本关已看广告换刷新道具次数
   adRefreshMax: number;     // 【广告续命】本关可看广告换刷新道具上限（默认见 GameConfig.AD_LIMITS.refresh）
   adHammerUsed: number;     // 【广告续命】本关已看广告换破冰锤次数
   adHammerMax: number;      // 【广告续命】本关可看广告换破冰锤上限（默认见 GameConfig.AD_LIMITS.hammer）
+  // 【已停用·提示道具 2026-09-20】提示广告换取次数随提示功能下线
+  // adHintUsed: number;    // 【广告续命】本关已看广告换提示道具次数（v0.12.0）
+  // adHintMax: number;     // 【广告续命】本关可看广告换提示道具上限（默认见 GameConfig.AD_LIMITS.hint）
 }
 
 // ========== 物品运行时数据 ==========

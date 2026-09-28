@@ -2,7 +2,7 @@
  * 关卡配置数据
  *
  * 【注意】本文件由关卡编辑器生成，已覆盖原有手写关卡。
- * 生成时间：2026/9/6 18:14:46
+ * 生成时间：2026/9/13 15:09:57
  */
 
 import { ItemType, LevelConfig } from '../types/index';
@@ -1112,25 +1112,740 @@ export const LEVELS: LevelConfig[] = [
   // 第 28 关
   {
     level: 28,
-    grid: { rows: 5, cols: 5 },
-    obstacles: [],
-    buttons: [
-      { id: 1, pos: [0, 0] },
-    ],
-    activeBarriers: [
-      { id: 1, pos: [2, 2], kind: 'wall' },
+    grid: { rows: 6, cols: 6 },
+    obstacles: [
+      [1, 2],
+      [0, 2],
+      [1, 1],
+      [1, 0],
+      [2, 0],
+      [3, 0],
+      [4, 0],
+      [5, 0],
+      [5, 1],
+      [5, 3],
+      [5, 4],
+      [5, 5],
+      [4, 5],
+      [3, 5],
+      [2, 5],
+      [1, 5],
+      [0, 5],
+      [0, 4],
+      [0, 3],
+      [5, 2],
     ],
     items: [
+      { type: ItemType.SHOE_YELLOW, pos: [2, 1], layer: 1 },
+      { type: ItemType.SHOE_YELLOW, pos: [4, 3], layer: 2 },
+      { type: ItemType.APPLE_GREEN, pos: [1, 4], layer: 1 },
+      { type: ItemType.HAT_PURPLE, pos: [4, 1], layer: 2 },
+      { type: ItemType.MUG_RED, pos: [4, 1], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [4, 3], layer: 1 },
+      { type: ItemType.MUG_RED, pos: [3, 1], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [3, 1], layer: 2 },
+      { type: ItemType.MUG_RED, pos: [2, 4], layer: 1 },
+      { type: ItemType.HAT_PURPLE, pos: [4, 4], layer: 2 },
+      { type: ItemType.PLANT_GREEN, pos: [2, 2], layer: 1 },
+      { type: ItemType.MUG_RED, pos: [2, 2], layer: 2 },
+      { type: ItemType.BOOK_BLUE, pos: [3, 2], layer: 1 },
+      { type: ItemType.HEADPHONE_BLACK, pos: [3, 2], layer: 2 },
+      { type: ItemType.APPLE_GREEN, pos: [4, 2], layer: 2 },
+      { type: ItemType.SHOE_YELLOW, pos: [4, 2], layer: 1 },
+      { type: ItemType.SHOE_YELLOW, pos: [3, 4], layer: 2 },
+      { type: ItemType.APPLE_GREEN, pos: [3, 4], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [4, 4], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.MUG_RED, pos: [1, 3] },
+      { type: ItemType.HEADPHONE_BLACK, pos: [2, 1] },
+      { type: ItemType.SHOE_YELLOW, pos: [4, 3] },
+      { type: ItemType.APPLE_GREEN, pos: [3, 1] },
+      { type: ItemType.PLANT_GREEN, pos: [4, 4] },
+      { type: ItemType.HAT_PURPLE, pos: [2, 2] },
+      { type: ItemType.BOOK_BLUE, pos: [3, 2] },
+    ],
+    maxSteps: 60,
+  },
+
+  // 第 29 关
+  {
+    level: 29,
+    grid: { rows: 8, cols: 6 },
+    obstacles: [
+      [2, 0],
+      [1, 0],
+      [1, 2],
+      [1, 5],
+      [2, 5],
+      [5, 0],
+      [6, 0],
+      [6, 3],
+      [6, 5],
+      [5, 5],
+      [0, 1],
+      [7, 1],
+      [6, 2],
+      [7, 4],
+      [3, 0],
+      [3, 5],
+      [0, 4],
+      [0, 3],
+      [6, 1],
+    ],
+    items: [
+      { type: ItemType.LAMP_ORANGE, pos: [4, 1], layer: 3 },
+      { type: ItemType.HAT_PURPLE, pos: [3, 1], layer: 3 },
+      { type: ItemType.ALARM_PINK, pos: [5, 2], layer: 3 },
+      { type: ItemType.LAMP_ORANGE, pos: [5, 2], layer: 2 },
+      { type: ItemType.BOOK_BLUE, pos: [2, 3], layer: 1 },
+      { type: ItemType.HAT_PURPLE, pos: [2, 4], layer: 1 },
+      { type: ItemType.APPLE_GREEN, pos: [4, 1], layer: 2 },
+      { type: ItemType.BOOK_BLUE, pos: [3, 1], layer: 2 },
+      { type: ItemType.MUG_RED, pos: [3, 2], layer: 2 },
+      { type: ItemType.HAT_PURPLE, pos: [3, 2], layer: 1 },
+      { type: ItemType.HEADPHONE_BLACK, pos: [3, 3], layer: 2 },
+      { type: ItemType.APPLE_GREEN, pos: [3, 3], layer: 1 },
+      { type: ItemType.MUG_RED, pos: [3, 1], layer: 1 },
+      { type: ItemType.SHOE_YELLOW, pos: [5, 3], layer: 3 },
+      { type: ItemType.LAMP_ORANGE, pos: [5, 3], layer: 2 },
+      { type: ItemType.HAT_PURPLE, pos: [4, 4], layer: 3 },
+      { type: ItemType.BOOK_BLUE, pos: [4, 4], layer: 2 },
+      { type: ItemType.SHOE_YELLOW, pos: [2, 1], layer: 1 },
+      { type: ItemType.ALARM_PINK, pos: [4, 2], layer: 1 },
+      { type: ItemType.SHOE_YELLOW, pos: [4, 2], layer: 2 },
+      { type: ItemType.HEADPHONE_BLACK, pos: [4, 2], layer: 3 },
+      { type: ItemType.SHOE_YELLOW, pos: [4, 3], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [4, 3], layer: 2 },
+      { type: ItemType.PLANT_GREEN, pos: [2, 2], layer: 1 },
+      { type: ItemType.ALARM_PINK, pos: [5, 1], layer: 3 },
+      { type: ItemType.HAT_PURPLE, pos: [5, 1], layer: 2 },
+      { type: ItemType.HEADPHONE_BLACK, pos: [5, 2], layer: 1 },
+      { type: ItemType.HEADPHONE_BLACK, pos: [5, 4], layer: 3 },
+      { type: ItemType.HEADPHONE_BLACK, pos: [3, 4], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [5, 4], layer: 2 },
+      { type: ItemType.PLANT_GREEN, pos: [5, 1], layer: 1 },
+      { type: ItemType.BOOK_BLUE, pos: [4, 1], layer: 1 },
+      { type: ItemType.LAMP_ORANGE, pos: [4, 4], layer: 1 },
+      { type: ItemType.APPLE_GREEN, pos: [5, 3], layer: 1 },
+      { type: ItemType.ALARM_PINK, pos: [5, 4], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.MUG_RED, pos: [1, 3] },
+      { type: ItemType.PLANT_GREEN, pos: [2, 4] },
+      { type: ItemType.HAT_PURPLE, pos: [4, 2] },
+      { type: ItemType.ALARM_PINK, pos: [4, 3] },
+      { type: ItemType.HEADPHONE_BLACK, pos: [2, 1] },
+      { type: ItemType.LAMP_ORANGE, pos: [5, 4] },
+      { type: ItemType.BOOK_BLUE, pos: [5, 1] },
+      { type: ItemType.APPLE_GREEN, pos: [2, 2] },
+      { type: ItemType.SHOE_YELLOW, pos: [3, 4] },
+    ],
+    maxSteps: 85,
+  },
+
+  // 第 30 关
+  {
+    level: 30,
+    grid: { rows: 6, cols: 6 },
+    obstacles: [
+      [1, 0],
+      [2, 0],
+      [3, 0],
+      [4, 0],
+      [5, 0],
+      [5, 1],
+      [5, 2],
+      [5, 3],
+      [5, 4],
+      [5, 5],
+      [4, 5],
+      [3, 5],
+      [2, 5],
+      [1, 5],
+      [0, 4],
+      [0, 3],
+      [0, 2],
+      [0, 1],
+      [0, 0],
+      [0, 5],
+      [1, 4],
+      [4, 1],
+    ],
+    items: [
+      { type: ItemType.APPLE_GREEN, pos: [3, 3], layer: 1 },
+      { type: ItemType.LAMP_ORANGE, pos: [2, 2], layer: 1 },
+      { type: ItemType.SHOE_YELLOW, pos: [3, 2], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [3, 1], layer: 1 },
+      { type: ItemType.BOOK_BLUE, pos: [3, 4], layer: 1 },
+      { type: ItemType.MUG_RED, pos: [4, 4], layer: 1 },
+      { type: ItemType.HEADPHONE_BLACK, pos: [2, 1], layer: 1 },
+      { type: ItemType.APPLE_GREEN, pos: [1, 1], layer: 1 },
+      { type: ItemType.MUG_RED, pos: [2, 3], layer: 1 },
+      { type: ItemType.LAMP_ORANGE, pos: [4, 2], layer: 1 },
+      { type: ItemType.HAT_PURPLE, pos: [1, 2], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.MUG_RED, pos: [1, 1] },
+      { type: ItemType.LAMP_ORANGE, pos: [1, 2] },
+      { type: ItemType.HAT_PURPLE, pos: [2, 2] },
+      { type: ItemType.PLANT_GREEN, pos: [2, 3] },
+      { type: ItemType.HEADPHONE_BLACK, pos: [3, 3] },
+      { type: ItemType.ALARM_PINK, pos: [3, 2] },
+      { type: ItemType.SHOE_YELLOW, pos: [3, 1] },
+      { type: ItemType.APPLE_GREEN, pos: [4, 4] },
+      { type: ItemType.BOOK_BLUE, pos: [4, 2] },
+    ],
+    maxSteps: 26,
+  },
+
+  // 第 31 关
+  {
+    level: 31,
+    grid: { rows: 9, cols: 6 },
+    obstacles: [
+      [2, 1],
+      [1, 0],
+      [0, 4],
+      [3, 2],
+      [4, 1],
+      [8, 5],
+      [8, 4],
+      [8, 3],
+      [4, 4],
+      [6, 4],
+      [7, 4],
+      [3, 5],
+    ],
+    portals: [
+      { id: 1, pos: [0, 5], uses: 2 },
+      { id: 2, pos: [4, 0], uses: 2 },
+      { id: 2, pos: [4, 5], uses: 2 },
+      { id: 1, pos: [7, 5], uses: 2 },
+    ],
+    waters: [
+      { pos: [1, 1], freezeIn: 1 },
+      { pos: [1, 2], freezeIn: 1 },
+      { pos: [1, 3], freezeIn: 2 },
+      { pos: [1, 5], freezeIn: 4 },
+      { pos: [5, 3], freezeIn: 1 },
+      { pos: [5, 2], freezeIn: 2 },
+      { pos: [6, 0], freezeIn: 2 },
+      { pos: [5, 0], freezeIn: 5 },
+    ],
+    items: [
+      { type: ItemType.APPLE_GREEN, pos: [0, 1], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.APPLE_GREEN, pos: [3, 1] },
+    ],
+    maxSteps: 6,
+  },
+
+  // 第 32 关
+  {
+    level: 32,
+    grid: { rows: 9, cols: 6 },
+    obstacles: [
+      [0, 1],
+      [8, 4],
+      [1, 1],
+      [2, 1],
+      [7, 4],
+      [6, 4],
+      [0, 4],
+    ],
+    portals: [
+      { id: 1, pos: [0, 5], uses: 2 },
+      { id: 1, pos: [8, 0], uses: 2 },
+    ],
+    waters: [
+      { pos: [3, 1], freezeIn: 1 },
+      { pos: [5, 4], freezeIn: 1 },
+      { pos: [7, 3], freezeIn: 2 },
+      { pos: [4, 4], freezeIn: 1 },
+      { pos: [4, 1], freezeIn: 1 },
+      { pos: [1, 3], freezeIn: 6 },
+      { pos: [2, 2], freezeIn: 2 },
+      { pos: [7, 2], freezeIn: 5 },
+    ],
+    items: [
+      { type: ItemType.MUG_RED, pos: [0, 0], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [8, 5], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.MUG_RED, pos: [0, 2] },
+      { type: ItemType.PLANT_GREEN, pos: [8, 3] },
+    ],
+    maxSteps: 7,
+  },
+
+  // 第 33 关
+  {
+    level: 33,
+    grid: { rows: 9, cols: 6 },
+    obstacles: [
+      [0, 1],
+      [8, 4],
+      [1, 1],
+      [2, 1],
+      [7, 4],
+      [6, 4],
+      [0, 4],
+    ],
+    portals: [
+      { id: 1, pos: [8, 1], uses: 2 },
+      { id: 1, pos: [0, 5], uses: 2 },
+    ],
+    waters: [
+      { pos: [3, 1], freezeIn: 1 },
+      { pos: [5, 4], freezeIn: 1 },
+      { pos: [7, 3], freezeIn: 2 },
+      { pos: [4, 4], freezeIn: 1 },
+      { pos: [4, 1], freezeIn: 1 },
+      { pos: [1, 3], freezeIn: 6 },
+      { pos: [2, 2], freezeIn: 2 },
+      { pos: [7, 2], freezeIn: 5 },
+    ],
+    items: [
+      { type: ItemType.MUG_RED, pos: [0, 0], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [8, 5], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.MUG_RED, pos: [0, 2] },
+      { type: ItemType.PLANT_GREEN, pos: [8, 3] },
+    ],
+    maxSteps: 8,
+  },
+
+  // 第 34 关
+  {
+    level: 34,
+    grid: { rows: 9, cols: 6 },
+    obstacles: [],
+    waters: [
+      { pos: [3, 2], freezeIn: 2 },
+      { pos: [6, 3], freezeIn: 3 },
+      { pos: [6, 1], freezeIn: 5 },
+      { pos: [7, 2], freezeIn: 5 },
+      { pos: [2, 1], freezeIn: 8 },
+      { pos: [3, 4], freezeIn: 5 },
+      { pos: [2, 3], freezeIn: 5 },
+      { pos: [2, 4], freezeIn: 5 },
+      { pos: [3, 0], freezeIn: 5 },
+      { pos: [5, 0], freezeIn: 5 },
+      { pos: [4, 0], freezeIn: 5 },
+      { pos: [5, 4], freezeIn: 5 },
+      { pos: [4, 2], freezeIn: 7 },
+    ],
+    items: [
+      { type: ItemType.MUG_RED, pos: [5, 3], layer: 3 },
+      { type: ItemType.SHOE_YELLOW, pos: [6, 2], layer: 3 },
+      { type: ItemType.HEADPHONE_BLACK, pos: [5, 3], layer: 2 },
+      { type: ItemType.ALARM_PINK, pos: [5, 3], layer: 1 },
+      { type: ItemType.APPLE_GREEN, pos: [6, 2], layer: 2 },
+      { type: ItemType.HAT_PURPLE, pos: [6, 2], layer: 1 },
+      { type: ItemType.APPLE_GREEN, pos: [4, 3], layer: 1 },
+      { type: ItemType.MUG_RED, pos: [4, 1], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [4, 1], layer: 2 },
+      { type: ItemType.SHOE_YELLOW, pos: [5, 1], layer: 1 },
+      { type: ItemType.ALARM_PINK, pos: [5, 1], layer: 2 },
+      { type: ItemType.APPLE_GREEN, pos: [5, 1], layer: 3 },
+      { type: ItemType.HEADPHONE_BLACK, pos: [3, 1], layer: 3 },
+      { type: ItemType.MUG_RED, pos: [3, 1], layer: 2 },
+      { type: ItemType.PLANT_GREEN, pos: [3, 1], layer: 1 },
+      { type: ItemType.HAT_PURPLE, pos: [3, 3], layer: 2 },
+      { type: ItemType.HEADPHONE_BLACK, pos: [3, 3], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.MUG_RED, pos: [2, 2] },
+      { type: ItemType.PLANT_GREEN, pos: [4, 4] },
+      { type: ItemType.APPLE_GREEN, pos: [4, 2] },
+      { type: ItemType.HAT_PURPLE, pos: [4, 1] },
+      { type: ItemType.SHOE_YELLOW, pos: [5, 1] },
+      { type: ItemType.HEADPHONE_BLACK, pos: [3, 1] },
+      { type: ItemType.ALARM_PINK, pos: [5, 2] },
+      { type: ItemType.APPLE_GREEN, pos: [3, 3] },
+    ],
+    maxSteps: 50,
+  },
+
+  // 第 35 关
+  {
+    level: 35,
+    grid: { rows: 9, cols: 6 },
+    obstacles: [
+      [2, 1],
+      [3, 1],
+      [1, 1],
+      [0, 1],
+      [5, 1],
+      [6, 1],
+      [7, 1],
+      [8, 1],
+      [0, 3],
+      [3, 0],
+      [3, 3],
+      [3, 4],
+      [3, 5],
+      [1, 3],
+      [2, 3],
+      [5, 3],
+      [5, 4],
+      [5, 5],
+      [5, 0],
+      [6, 3],
+      [7, 3],
+      [8, 3],
+    ],
+    buttons: [
+      { id: 1, pos: [2, 2] },
+    ],
+    activeBarriers: [
+      { id: 1, pos: [4, 4], kind: 'wall' },
+    ],
+    items: [
+      { type: ItemType.APPLE_GREEN, pos: [0, 2], layer: 1 },
       { type: ItemType.MUG_RED, pos: [4, 0], layer: 1 },
-      { type: ItemType.BOOK_BLUE, pos: [2, 0], layer: 1 },
-      { type: ItemType.PLANT_GREEN, pos: [2, 4], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.MUG_RED, pos: [4, 5] },
+      { type: ItemType.APPLE_GREEN, pos: [8, 2] },
+    ],
+    maxSteps: 5,
+  },
+
+  // 第 36 关
+  {
+    level: 36,
+    grid: { rows: 8, cols: 6 },
+    obstacles: [
+      [1, 0],
+      [1, 1],
+      [1, 3],
+      [1, 4],
+      [1, 5],
+      [5, 2],
+      [2, 1],
+      [3, 1],
+      [4, 1],
+      [5, 4],
+      [5, 1],
+      [5, 0],
+      [5, 5],
+    ],
+    portals: [
+      { id: 1, pos: [2, 5], uses: 1 },
+      { id: 1, pos: [6, 2], uses: 1 },
+    ],
+    buttons: [
+      { id: 1, pos: [1, 2] },
+    ],
+    activeBarriers: [
+      { id: 1, pos: [5, 3], kind: 'wall' },
+    ],
+    items: [
+      { type: ItemType.MUG_RED, pos: [0, 5], layer: 1 },
+      { type: ItemType.SHOE_YELLOW, pos: [0, 0], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.MUG_RED, pos: [7, 0] },
+      { type: ItemType.SHOE_YELLOW, pos: [7, 5] },
+    ],
+    maxSteps: 11,
+  },
+
+  // 第 37 关
+  {
+    level: 37,
+    grid: { rows: 7, cols: 5 },
+    obstacles: [
+      [1, 0],
+      [1, 2],
+      [1, 3],
+    ],
+    waters: [
+      { pos: [1, 4], freezeIn: 2 },
+    ],
+    buttons: [
+      { id: 1, pos: [6, 1] },
+    ],
+    activeBarriers: [
+      { id: 1, pos: [1, 1], kind: 'wall' },
+    ],
+    items: [
+      { type: ItemType.LAMP_ORANGE, pos: [6, 0], layer: 1 },
+      { type: ItemType.MUG_RED, pos: [0, 0], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.MUG_RED, pos: [6, 4] },
+      { type: ItemType.LAMP_ORANGE, pos: [0, 2] },
+    ],
+    maxSteps: 9,
+  },
+
+  // 第 38 关
+  {
+    level: 38,
+    grid: { rows: 8, cols: 6 },
+    obstacles: [
+      [3, 1],
+      [3, 0],
+      [3, 4],
+      [3, 5],
+    ],
+    portals: [
+      { id: 1, pos: [7, 2], uses: 1 },
+      { id: 1, pos: [0, 0], uses: 1 },
+    ],
+    buttons: [
+      { id: 1, pos: [1, 2] },
+      { id: 2, pos: [1, 3] },
+    ],
+    activeBarriers: [
+      { id: 2, pos: [3, 2], kind: 'wall' },
+      { id: 1, pos: [3, 3], kind: 'wall' },
+    ],
+    items: [
+      { type: ItemType.HAT_PURPLE, pos: [0, 2], layer: 2 },
+      { type: ItemType.SHOE_YELLOW, pos: [0, 3], layer: 2 },
+      { type: ItemType.LAMP_ORANGE, pos: [0, 2], layer: 1 },
+      { type: ItemType.HEADPHONE_BLACK, pos: [0, 3], layer: 1 },
+      { type: ItemType.APPLE_GREEN, pos: [5, 2], layer: 1 },
+      { type: ItemType.ALARM_PINK, pos: [5, 3], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.SHOE_YELLOW, pos: [7, 0] },
+      { type: ItemType.HAT_PURPLE, pos: [7, 5] },
+      { type: ItemType.HEADPHONE_BLACK, pos: [6, 0] },
+      { type: ItemType.LAMP_ORANGE, pos: [6, 5] },
+      { type: ItemType.ALARM_PINK, pos: [0, 5] },
+      { type: ItemType.APPLE_GREEN, pos: [2, 0] },
+    ],
+    maxSteps: 17,
+  },
+
+  // 第 39 关
+  {
+    level: 39,
+    grid: { rows: 9, cols: 6 },
+    obstacles: [
+      [5, 1],
+      [6, 1],
+      [5, 0],
+      [3, 0],
+      [3, 5],
+      [3, 4],
+      [3, 1],
+      [5, 4],
+      [5, 5],
+      [2, 4],
+      [6, 4],
+      [2, 1],
+    ],
+    buttons: [
+      { id: 1, pos: [4, 1] },
+      { id: 1, pos: [7, 2] },
+      { id: 2, pos: [1, 3] },
+      { id: 2, pos: [4, 4] },
+    ],
+    activeBarriers: [
+      { id: 1, pos: [4, 2], kind: 'wall' },
+      { id: 1, pos: [6, 2], kind: 'wall' },
+      { id: 2, pos: [5, 3], kind: 'wall' },
+      { id: 2, pos: [2, 3], kind: 'wall' },
+    ],
+    items: [
+      { type: ItemType.PLANT_GREEN, pos: [4, 0], layer: 1 },
+      { type: ItemType.MUG_RED, pos: [1, 2], layer: 1 },
+      { type: ItemType.SHOE_YELLOW, pos: [7, 3], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [4, 5], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.SHOE_YELLOW, pos: [0, 3] },
+      { type: ItemType.MUG_RED, pos: [8, 2] },
+      { type: ItemType.PLANT_GREEN, pos: [0, 2] },
+      { type: ItemType.PLANT_GREEN, pos: [8, 3] },
+    ],
+    maxSteps: 15,
+  },
+
+  // 第 40 关
+  {
+    level: 40,
+    grid: { rows: 9, cols: 6 },
+    obstacles: [
+      [5, 0],
+      [5, 5],
+      [3, 2],
+      [3, 3],
+      [3, 0],
+      [3, 5],
+    ],
+    waters: [
+      { pos: [4, 1], freezeIn: 4 },
+      { pos: [2, 4], freezeIn: 1 },
+      { pos: [8, 1], freezeIn: 6 },
+    ],
+    oneways: [
+      { pos: [5, 2], dir: 'up' },
+      { pos: [5, 3], dir: 'down' },
+      { pos: [5, 4], dir: 'up' },
+    ],
+    buttons: [
+      { id: 1, pos: [3, 1] },
+      { id: 1, pos: [3, 4] },
+    ],
+    activeBarriers: [
+      { id: 1, pos: [5, 1], kind: 'wall' },
+    ],
+    items: [
+      { type: ItemType.BOOK_BLUE, pos: [0, 4], layer: 1 },
+      { type: ItemType.LAMP_ORANGE, pos: [0, 1], layer: 3 },
+      { type: ItemType.PLANT_GREEN, pos: [0, 1], layer: 2 },
+      { type: ItemType.SHOE_YELLOW, pos: [0, 1], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.PLANT_GREEN, pos: [8, 1] },
+      { type: ItemType.BOOK_BLUE, pos: [8, 4] },
+      { type: ItemType.LAMP_ORANGE, pos: [4, 2] },
+      { type: ItemType.SHOE_YELLOW, pos: [8, 3] },
+    ],
+    maxSteps: 12,
+  },
+
+  // 第 41 关
+  {
+    level: 41,
+    grid: { rows: 5, cols: 5 },
+    obstacles: [],
+    items: [
+      { type: ItemType.LAMP_ORANGE, pos: [0, 0], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.LAMP_ORANGE, pos: [4, 1] },
+    ],
+  },
+
+  // 第 42 关｜单坑漏斗：两条平行分区墙各留一个单格闸口，多个同类物品共用一个袋底坑：把"必须排队穿过窄口"教给玩家，并首次引入水洼倒计时
+  // 生成器产出（2026-09-20 第 3 批）｜ref=14 maxSteps=16｜障碍 10
+  // ⚠️ **策划实测判定不合格**：「13 步过关、零难度、毫无乐趣和策略性可言」。
+  //    机器佐证：贪心探针（完全顺着直觉走）**14 步即通关** ⇒ "直觉即正解"。
+  //    根因：该批骨架把所有闸口开在同一端，盘面边缘形成"贯通通道"，任何物品都能沿它直达目标。
+  //    保留仅供对比，建议用 L44（同套路，贪心 400 步走不完）替代。
+  {
+    level: 42,
+    grid: { rows: 6, cols: 5 },
+    obstacles: [
+      [0, 1], [0, 3], [1, 1], [1, 3], [2, 1], [2, 3], [3, 1], [3, 3], [4, 1], [4, 3],
+    ],
+    waters: [
+      { pos: [5, 3], freezeIn: 15 },
+    ],
+    items: [
+      { type: ItemType.MUG_RED, pos: [5, 4], layer: 1 },
+      { type: ItemType.BOOK_BLUE, pos: [5, 4], layer: 2 },
+      { type: ItemType.MUG_RED, pos: [5, 4], layer: 3 },
+      { type: ItemType.BOOK_BLUE, pos: [5, 2], layer: 1 },
+      { type: ItemType.BOOK_BLUE, pos: [5, 2], layer: 2 },
+      { type: ItemType.MUG_RED, pos: [1, 4], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.BOOK_BLUE, pos: [0, 0] },
+      { type: ItemType.MUG_RED, pos: [1, 0] },
+    ],
+    maxSteps: 16,
+  },
+
+  // 第 43 关｜双墙夹道：两条分区墙切出三个区域，闸口错位：走错区就得原路退回，通道保持成为主要压力；水洼进一步压缩可走格子
+  // 生成器产出（2026-09-20 第 3 批）｜障碍 13
+  // ⚠️ maxSteps 已修正：生成器原报 ref=24 / 上限 26，但那是「未加水洼」的解 —— 真机最优是 **33 步**
+  //    （`solve 43 --steps=40` → SOLVED 33 步 / 4ms / 33 次扩展）。已改为 35 = 33 + 2 容错。
+  {
+    level: 43,
+    grid: { rows: 7, cols: 6 },
+    obstacles: [
+      [0, 1], [0, 3], [1, 1], [1, 3], [2, 1], [2, 3], [3, 1], [3, 2], [3, 3], [4, 1], [4, 3], [5, 1], [5, 3],
+    ],
+    waters: [
+      { pos: [6, 5], freezeIn: 12 },
+    ],
+    items: [
+      { type: ItemType.PLANT_GREEN, pos: [6, 4], layer: 1 },
+      { type: ItemType.BOOK_BLUE, pos: [6, 4], layer: 2 },
+      { type: ItemType.BOOK_BLUE, pos: [6, 4], layer: 3 },
+      { type: ItemType.MUG_RED, pos: [0, 5], layer: 1 },
+      { type: ItemType.MUG_RED, pos: [0, 5], layer: 2 },
+      { type: ItemType.BOOK_BLUE, pos: [0, 5], layer: 3 },
+      { type: ItemType.PLANT_GREEN, pos: [1, 5], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [1, 5], layer: 2 },
+      { type: ItemType.MUG_RED, pos: [0, 4], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.PLANT_GREEN, pos: [0, 0] },
+      { type: ItemType.MUG_RED, pos: [1, 0] },
+      { type: ItemType.BOOK_BLUE, pos: [2, 0] },
+    ],
+    maxSteps: 35,
+  },
+
+  // 第 44 关｜单坑漏斗：两条平行分区墙（闸口分列两端）各留一个单格闸口，多个同类物品共用一个袋底坑
+  // 生成器产出（2026-09-20 第 4 批·交替闸口版）｜障碍 8 绕行 2.53 必经 8
+  // 难度探针：贪心 **400 步走不完** ✓ 有策略｜随机漫游 完成 0% / 卡死 0%｜ref=20 maxSteps=22
+  {
+    level: 44,
+    grid: { rows: 6, cols: 5 },
+    obstacles: [
+      [1, 1], [1, 2], [1, 3], [1, 4], [3, 0], [3, 1], [3, 2], [3, 3],
+    ],
+    waters: [
+      { pos: [2, 1], freezeIn: 15 },
+    ],
+    items: [
+      { type: ItemType.BOOK_BLUE, pos: [2, 4], layer: 1 },
+      { type: ItemType.BOOK_BLUE, pos: [2, 4], layer: 2 },
+      { type: ItemType.MUG_RED, pos: [2, 4], layer: 3 },
+      { type: ItemType.MUG_RED, pos: [2, 0], layer: 1 },
+      { type: ItemType.MUG_RED, pos: [2, 0], layer: 2 },
+      { type: ItemType.BOOK_BLUE, pos: [4, 4], layer: 1 },
     ],
     targets: [
       { type: ItemType.MUG_RED, pos: [0, 4] },
-      { type: ItemType.BOOK_BLUE, pos: [4, 4] },
-      { type: ItemType.PLANT_GREEN, pos: [0, 2] },
+      { type: ItemType.BOOK_BLUE, pos: [0, 3] },
     ],
-  }
+    maxSteps: 22,
+  },
+
+  // 第 45 关｜双墙夹道：两条分区墙切出三个区域，闸口分列两端形成之字形：走错区就得原路退回
+  // 生成器产出（2026-09-20 第 4 批·交替闸口版）｜障碍 13 绕行 2.00 必经 8
+  // 难度探针：贪心 **走进死局** ✓ 有策略｜随机漫游 完成 47% / 卡死 53%｜ref=30 maxSteps=32
+  {
+    level: 45,
+    grid: { rows: 7, cols: 6 },
+    obstacles: [
+      [0, 4], [1, 2], [1, 4], [2, 2], [2, 4], [3, 1], [3, 2], [3, 4], [4, 2], [4, 4], [5, 2], [5, 4], [6, 2],
+    ],
+    waters: [
+      { pos: [0, 0], freezeIn: 14 },
+    ],
+    items: [
+      { type: ItemType.BOOK_BLUE, pos: [0, 1], layer: 1 },
+      { type: ItemType.MUG_RED, pos: [0, 1], layer: 2 },
+      { type: ItemType.MUG_RED, pos: [0, 1], layer: 3 },
+      { type: ItemType.PLANT_GREEN, pos: [6, 5], layer: 1 },
+      { type: ItemType.BOOK_BLUE, pos: [6, 5], layer: 2 },
+      { type: ItemType.PLANT_GREEN, pos: [3, 0], layer: 1 },
+      { type: ItemType.PLANT_GREEN, pos: [3, 0], layer: 2 },
+      { type: ItemType.MUG_RED, pos: [3, 0], layer: 3 },
+      { type: ItemType.BOOK_BLUE, pos: [4, 1], layer: 1 },
+    ],
+    targets: [
+      { type: ItemType.MUG_RED, pos: [3, 3] },
+      { type: ItemType.PLANT_GREEN, pos: [2, 3] },
+      { type: ItemType.BOOK_BLUE, pos: [4, 3] },
+    ],
+    maxSteps: 32,
+  },
 ];
 
 /**

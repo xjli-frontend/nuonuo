@@ -18,6 +18,7 @@ const { ccclass } = _decorator;
 import { Board } from '../nuonuo/systems/Board';
 import { PathCalculator } from '../nuonuo/systems/PathCalculator';
 import { gameState } from '../nuonuo/core/GameState';
+import { GameConfig } from '../nuonuo/config/GameConfig';
 import { getLevelConfig } from '../nuonuo/config/LevelConfig';
 import { CellType, CellData, ItemType, LevelConfig } from '../nuonuo/types/index';
 
@@ -104,7 +105,7 @@ export interface ResultData {
     level: number;
     steps: number;
     hasNext: boolean;
-    /** 步数耗尽但本关还有看广告加步数次数 → 宿主弹「看广告 +5步」续命弹窗（非最终失败结算） */
+    /** 步数耗尽但本关还有金币续命次数 → 宿主弹「花金币加步数」续命弹窗（非最终失败结算） */
     stepLimit?: boolean;
 }
 
@@ -118,7 +119,7 @@ export default class NuonuoGame extends Component {
 
     // 本地 HUD 计数（步数/撤销由本层自管，通关进度交给 gameState 持久化）
     private stepsUsed: number = 0;
-    private maxSteps: number | null = null;   // 步数上限（看广告续命会动态 +5，不能直接读 levelCfg）
+    private maxSteps: number | null = null;   // 步数上限（金币续命会动态 +STEP_RESCUE_STEPS，不能直接读 levelCfg）
     private totalItems: number = 0;
 
     private boardRoot: Node = null;
@@ -133,6 +134,10 @@ export default class NuonuoGame extends Component {
     private dragFrom: [number, number] = null;
     private dragPreview: Node = null;
     private reachable: Set<string> = new Set();
+    // 按下位置（棋盘局部坐标）：松手位移小于阈值时判定为「点击拿起」（仅点击模式生效）
+    private tapStart: [number, number] = null;
+    // 点击模式：已「点击拿起」某物品，浮动预览停在原格上方，等待下一次点击放置
+    private _selected: boolean = false;
 
     // 撤销快照：JSON 深拷贝棋盘 + 本地计数（Board.clone 是浅拷贝，不能用）
     private history: string[] = [];
@@ -144,6 +149,8 @@ export default class NuonuoGame extends Component {
     public get hammerMode(): boolean { return this._hammerMode; }
     public set hammerMode(v: boolean) {
         this._hammerMode = v;
+        // 进入/退出敲冰模式都会中断进行中的拖拽（对齐源工程）
+        this.cancelDrag();
         this.render();
         this.onHammerModeChange?.(v);
     }
@@ -151,6 +158,14 @@ export default class NuonuoGame extends Component {
     /** 本关当前是否存在可见冰块（宿主点破冰锤按钮时先检测） */
     public hasIce(): boolean {
         return this.board ? this.board.hasAnyIce() : false;
+    }
+
+    /**
+     * 放下正在「点击拿起」的物品（切回长按拖动 / 暂停 / 强干预前由宿主调用），
+     * 否则会残留悬浮预览与「门被压开」的显示。非点击拿起状态时为空操作。
+     */
+    public dropHeld(): void {
+        if (this._selected || this.dragFrom) this.dropHeldItem();
     }
 
     // 宿主注入的回调（默认空；不注入则静默，保持本类框架无关）
@@ -192,6 +207,12 @@ export default class NuonuoGame extends Component {
             ...Array.from({ length: 5 }, (_, i) => [`portal_${i + 1}`, `portal${i + 1}`] as [string, string]),
             ...Array.from({ length: 9 }, (_, i) => [`item_${i + 1}`, `item_${i + 1}`] as [string, string]),
             ...Array.from({ length: 9 }, (_, i) => [`item_${i + 1}_1`, `item_${i + 1}_1`] as [string, string]),
+            // 机关美术：按钮 4 套 + 活动门 4 套（开/关两态），按 id 取模 4 映射（对齐源工程 MAX_MECHANISM_ART）
+            ...Array.from({ length: 4 }, (_, i) => [`button_${i + 1}`, `button_${i + 1}`] as [string, string]),
+            ...Array.from({ length: 4 }, (_, i) => [
+                [`door_${i + 1}_close`, `d${i + 1}_close`] as [string, string],
+                [`door_${i + 1}_open`, `d${i + 1}_open`] as [string, string],
+            ]).flat(),
             ['boad_bg', 'level/boad_bg'],   // 棋盘九宫格底板
             ['num_bg', 'level/num_bg'],     // 数字圆底（传送门次数 / 水洼倒计时）
         ];
@@ -238,6 +259,24 @@ export default class NuonuoGame extends Component {
         return true;
     }
 
+    /** 按原图宽高比铺一个非正方形子节点（活动门美术是竖版，不能按格子正方拉伸），返回该节点 */
+    private addSpriteRatio(parent: Node, sf: SpriteFrame, height: number, offset: [number, number] = [0, 0], alpha: number = 1): Node {
+        const r = sf.rect;
+        const ratio = (r && r.height > 0) ? r.width / r.height : 1;
+        const n = new Node("spr");
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.setPosition(offset[0], offset[1], 0);
+        n.addComponent(UITransform).setContentSize(height * ratio, height);
+        const spr = n.addComponent(Sprite);
+        spr.sizeMode = Sprite.SizeMode.CUSTOM;
+        spr.spriteFrame = sf;
+        if (alpha < 1) {
+            n.addComponent(UIOpacity).opacity = Math.round(alpha * 255);
+        }
+        return n;
+    }
+
     // ========== 关卡初始化 ==========
 
     private initLevel(level: number): void {
@@ -255,14 +294,21 @@ export default class NuonuoGame extends Component {
 
         // 让 gameState 的 currentLevel 与展示保持一致（并重置其内部计数）
         gameState.setLevel(level);
+        // 步数上限必须同步回核心包：gameState.canRescueSteps 读的是核心包自己的 data.maxSteps，
+        // 而 setLevel → resetLevelState 会把 maxSteps 清成 null。不补这一句它永远是 null，
+        // 「步数耗尽 → 花金币加步数」弹窗就永远不会出现（判定直接落到失败结算）。
+        gameState.setMaxSteps(cfg.maxSteps ?? null);
 
         this.stepsUsed = 0;
         this.maxSteps = cfg.maxSteps ?? null;
         this.totalItems = cfg.items.length;
         this.history = [];
         this.dragFrom = null;
+        this._selected = false;
+        this.tapStart = null;
         this.reachable.clear();
         this.clearDragPreview();
+        this.board.clearDragPreview();
         this._hammerMode = false;
         this.onHammerModeChange?.(false);   // 重开/换关退出破冰模式（宿主同步按钮标识；首次 play 时按钮尚未创建，回调是空操作）
 
@@ -398,23 +444,38 @@ export default class NuonuoGame extends Component {
                 this.renderOneway(node, cell, cs, x, y, w, rad);
                 break;
             case CellType.BUTTON:
-                this.drawButtonCell(node, x, y, w, cs);
-                this.addCellText(node, cell.buttonPressed ? '●' : '○', cs, C_BROWN);
+                this.drawButtonCell(node, cell, cs, x, y, w, rad);
                 break;
             case CellType.ACTIVE_WALL:
-                this.fillCellRect(node, cell.barrierActive ? C_EMPTY : C_WALL, x, y, w, rad, cs);
-                break;
             case CellType.ACTIVE_BRIDGE:
-                this.fillCellRect(node, cell.barrierActive ? C_BRIDGE : C_BOARD_BG, x, y, w, rad, cs);
+                // 活动墙 / 活动桥统一表现为一扇门（旧关卡数据里两种 type 都保留）
+                this.renderDoor(node, cell, cs, x, y, w, rad);
                 break;
             case CellType.TARGET:
                 this.renderTarget(node, g, cell, cs, x, y, w, rad);
                 break;
             case CellType.ITEM:
+                // 被物品压住的机关格：cell.type 会变成 ITEM，但 buttonId / barrierId / onewayDir 字段还在。
+                // 地形层必须照画（垫在物品之下），否则玩家完全看不到下面有按钮/门（对齐源工程 v0.10.5）。
+                if (cell.onewayDir !== undefined) this.renderOneway(node, cell, cs, x, y, w, rad);
+                if (cell.buttonId !== undefined) this.drawButtonCell(node, cell, cs, x, y, w, rad);
+                if (cell.barrierId !== undefined) this.renderDoor(node, cell, cs, x, y, w, rad);
                 this.renderItem(node, g, cell, r, c, cs, x, y, w, rad);
                 // 物品压在水洼上：不铺水贴图，在物品层之上叠雪花 + 倒计时提示（角标不被底座盖住）
                 if (cell.freezeCounter !== undefined && cell.freezeCounter > 0) {
                     this.addSnowCount(node, cell.freezeCounter, cs);
+                }
+                // 【v0.10.2】被水洼冻住的物品：物品之上盖一层半透明冰面（保留物品轮廓）
+                if (cell.frozen === true) {
+                    this.renderFrozenOverlay(node, cs);
+                }
+                // 【v0.10.5】物品底座几乎盖满整格，压在下面的单向门 / 按钮 / 活动门必须补角标，
+                // 否则玩家辨认不出这格下面压着什么（按钮与活动门互斥，只会画一个）
+                if (cell.onewayDir !== undefined) this.drawOnewayBadge(node, cell.onewayDir, cs);
+                if (cell.buttonId !== undefined) {
+                    this.drawMechanismBadge(node, cs, cell.buttonId, cell.buttonPressed === true);
+                } else if (cell.barrierId !== undefined) {
+                    this.drawMechanismBadge(node, cs, cell.barrierId, cell.barrierActive === true);
                 }
                 break;
             default: // EMPTY
@@ -432,8 +493,8 @@ export default class NuonuoGame extends Component {
             this.addHighlight(node, cs);
         }
 
-        // 破冰模式：高亮所有冰块格，提示可敲碎目标（对齐源工程 renderIceHighlights）
-        if (this._hammerMode && cell.type === CellType.ICE) {
+        // 破冰模式：高亮所有可敲目标（冰块 + 被冰封物品），提示可敲碎（对齐源工程 renderIceHighlights）
+        if (this._hammerMode && this.board.canBreakIce(r, c)) {
             this.addIceHighlight(node, cs);
         }
 
@@ -634,22 +695,44 @@ export default class NuonuoGame extends Component {
     }
 
     private onTouchStart(e: EventTouch): void {
+        // 破冰模式：点击冰块敲碎 / 点其他格子提示（不消耗道具），不进入拖拽（对齐源工程）
+        if (this._hammerMode) {
+            this.cancelDrag();
+            this.handleHammerTouch(e);
+            return;
+        }
+
+        // 点击模式：已「点击拿起」某物品时，本次点击视为放置指令
+        // （点回原格 / 点棋盘外 = 放下；点另一个物品 = 切换选中；点可达格 = 落下）
+        if (this._selected) {
+            this.handlePlacementTap(e);
+            return;
+        }
+
         this.dragFrom = null;
         this.reachable.clear();
         this.clearDragPreview();
 
-        // 破冰模式：点击冰块敲碎 / 点其他格子提示（不消耗道具），不进入拖拽（对齐源工程）
-        if (this._hammerMode) {
-            this.handleHammerTouch(e);
-            return;
-        }
+        // 记录按下位置：松手时位移很小 → 视为「点击拿起」（仅点击模式走 SELECTED 分支）
+        this.tapStart = this.touchToBoardPos(e);
 
         const rc = this.touchToGrid(e);
         if (rc) {
             const [r, c] = rc;
             const cell = this.board.getCell(r, c);
-            if (cell && cell.type === CellType.ITEM && this.board.canDrag(r, c)) {
+            if (cell && cell.type === CellType.ITEM && !this.board.canDrag(r, c)) {
+                // 被冰封的物品：明确反馈（不消耗任何道具，需破冰锤解冻）
+                if (this.board.isFrozen(r, c)) {
+                    this.onSfx?.('invalid');
+                    this.onTip?.('物品被冻住了，用破冰锤敲碎冰块');
+                }
+            } else if (cell && cell.type === CellType.ITEM && this.board.canDrag(r, c)) {
                 this.dragFrom = [r, c];
+                // 拿起即释放：拖拽中的物品在机关结算里视为已离开本格
+                // → 所压按钮立刻弹起、所连活动门立刻转为「关闭」显示，不必等落地才结算
+                this.board.setDragPreview(r, c);
+                this.board.recalcButtons();
+                // 计算可到达位置（此时门已是关闭态，射线自然穿不过去）
                 const reach = this.pathCalc.calculateReachable(r, c);
                 reach.forEach(x => this.reachable.add(`${x.row},${x.col}`));
                 // 拿起物品音效（无震动，避免拿起/放下频繁打扰，对齐源工程）
@@ -663,6 +746,8 @@ export default class NuonuoGame extends Component {
     }
 
     private onTouchMove(e: EventTouch): void {
+        // 点击拿着期间预览停在原格上方，不跟随手指
+        if (this._selected) return;
         if (!this.dragPreview || !this.dragFrom) return;
         const pos = this.touchToBoardPos(e);
         if (!pos) return;
@@ -670,38 +755,161 @@ export default class NuonuoGame extends Component {
     }
 
     private onTouchEnd(e: EventTouch): void {
+        // 点击拿起期间松手不处理（放置靠下一次点击）
+        if (this._selected) return;
         if (!this.dragFrom) {
             this.clearDragPreview();
             return;
         }
+
+        // 点击模式：松手位移小于阈值 → 判定为「点击」而非拖动，物品保持拿起状态
+        // （不落子、不回弹），可达格持续高亮，等玩家点目标格再放下
+        const pos = this.touchToBoardPos(e);
+        const threshold = this.cellSize * GameConfig.TAP_MOVE_RATIO;
+        const dx = (pos && this.tapStart) ? pos[0] - this.tapStart[0] : Number.MAX_VALUE;
+        const dy = (pos && this.tapStart) ? pos[1] - this.tapStart[1] : Number.MAX_VALUE;
+        if (gameState.tapMode && dx * dx + dy * dy <= threshold * threshold) {
+            this._selected = true;
+            this.parkDragPreview(this.dragFrom[0], this.dragFrom[1]);
+            this.onTip?.('已拿起物品，点击目标格放下');
+            return;
+        }
+
         const from = this.dragFrom;
         const rc = this.touchToGrid(e);
         const canMove = rc && this.pathCalc.canMoveTo(from[0], from[1], rc[0], rc[1]);
 
         // 先清拖拽状态与预览；成功移动时 doMove 会重绘源格，否则 render 让物品弹回原位
         this.dragFrom = null;
+        this.tapStart = null;
         this.reachable.clear();
         this.clearDragPreview();
+        // 拖拽结束：撤销「拿起即释放」的临时预览。此刻物品数据仍在原格（真正移动在 doMove 里），
+        // 这样移动前的快照才记录真实状态
+        this.board.clearDragPreview();
 
         if (canMove) {
             this.doMove(from[0], from[1], rc[0], rc[1]);
         } else {
+            // 物品没动：预览期被「弹起」的按钮要恢复真实状态（物品仍压着 → 门重新打开）
+            this.board.recalcButtons();
             this.render(); // 未落到可落点，物品弹回原位
-            this.onSfx?.('invalid');
-            this.onVibrate?.('short');
-            // 被挡住：源格 + 目标格轻微抖动，表现「反弹」
-            this.shakeCell(from[0], from[1]);
-            if (rc) this.shakeCell(rc[0], rc[1]);
+            // 松手在棋盘外视为取消，不播提示音（对齐源工程）
+            if (rc) {
+                this.onSfx?.('invalid');
+                this.onVibrate?.('short');
+                // 被挡住：源格 + 目标格轻微抖动，表现「反弹」
+                this.shakeCell(from[0], from[1]);
+                this.shakeCell(rc[0], rc[1]);
+            }
         }
     }
 
-    /** 破冰模式下的点击处理：命中冰块则消耗破冰锤敲碎，否则提示不消耗（对齐源工程 handleHammerTouch） */
+    /**
+     * 点击模式下「已拿起物品」时的落点判定（对齐源工程 handlePlacementTap）：
+     * - 点棋盘外 / 点回原格 → 放下（取消拿起，不消耗步数）
+     * - 点另一个可拖拽物品 → 切换选中（放下当前、拿起新的，不消耗步数）
+     * - 点可达格 → 移动落下（消耗 1 步），随后结束拿起状态
+     * - 其他位置 → 无效提示（不消耗任何东西），保持拿起状态
+     */
+    private handlePlacementTap(e: EventTouch): void {
+        const rc = this.touchToGrid(e);
+
+        // 点棋盘外 = 放下（与拖动松手到棋盘外一致，视为取消，不播提示音）
+        if (!rc) {
+            this.dropHeldItem();
+            return;
+        }
+
+        const [r, c] = rc;
+
+        // 点回原格 = 放下（物品原地未动，不消耗步数）
+        if (r === this.dragFrom[0] && c === this.dragFrom[1]) {
+            this.dropHeldItem();
+            this.onSfx?.('drop');
+            return;
+        }
+
+        // 点另一个可拖拽物品 = 切换选中
+        if (this.board.canDrag(r, c)) {
+            this.dragFrom = [r, c];
+            // 预览格换到新物品：机关按「新物品已离开原格」重新结算
+            this.board.setDragPreview(r, c);
+            this.board.recalcButtons();
+            this.reachable.clear();
+            this.pathCalc.calculateReachable(r, c).forEach(x => this.reachable.add(`${x.row},${x.col}`));
+            this.parkDragPreview(r, c);
+            this.render();
+            this.onSfx?.('pick');
+            return;
+        }
+
+        // 点可达格 = 移动落下
+        if (this.reachable.has(`${r},${c}`)) {
+            const from = this.dragFrom;
+            this.dragFrom = null;
+            this._selected = false;
+            this.tapStart = null;
+            this.reachable.clear();
+            this.clearDragPreview();
+            // 与拖动落子一致：先撤销「拿起即释放」预览，移动前的快照才记录真实状态
+            this.board.clearDragPreview();
+            this.doMove(from[0], from[1], r, c);
+            return;
+        }
+
+        // 其他位置：无效提示，保持拿起状态（不消耗步数）
+        this.onSfx?.('invalid');
+        this.onVibrate?.('short');
+        if (this.board.isFrozen(r, c)) {
+            this.onTip?.('物品被冻住了，用破冰锤敲碎冰块');
+        }
+    }
+
+    /** 放下已拿起的内容并恢复机关显示（点回原格 / 点棋盘外 / 暂停等强干预前调用） */
+    private dropHeldItem(): void {
+        this.cancelDrag();
+        this.board.recalcButtons();
+        this.render();
+    }
+
+    /**
+     * 中断进行中的拖拽（撤销 / 刷新 / 重开 / 破冰 / 换关等强干预操作前调用）。
+     * 除了复位拖拽状态，还必须清掉「拿起即释放」的预览格，
+     * 否则活动门会一直停在「关闭」显示上。
+     */
+    private cancelDrag(): void {
+        this.dragFrom = null;
+        this._selected = false;
+        this.tapStart = null;
+        this.reachable.clear();
+        this.clearDragPreview();
+        if (this.board) this.board.clearDragPreview();
+    }
+
+    /**
+     * 把浮动预览停在指定格上方（点击拿起时物品悬浮原格，不跟手指）。
+     * 切换选中时会重建预览节点，保证显示的是新拿起物品的图标。
+     * 调用前需先设好 this.dragFrom。
+     */
+    private parkDragPreview(r: number, c: number): void {
+        this.clearDragPreview();
+        const n = this.buildItemPreview(this.cellSize);
+        this.node.addChild(n);
+        const [x, y] = this.gridToBoardPos(r, c);
+        n.setPosition(x, y, 0);
+        this.dragPreview = n;
+    }
+
+    /** 破冰模式下的点击处理：命中冰块 / 被冰封物品则消耗破冰锤敲碎，否则提示不消耗（对齐源工程 handleHammerTouch） */
     private handleHammerTouch(e: EventTouch): void {
         const rc = this.touchToGrid(e);
         if (!rc) return;
         const [r, c] = rc;
-        if (this.board.isIce(r, c)) {
-            // 命中冰块：消耗道具 + 敲碎恢复原机制
+        // 【v0.10.2】可敲目标：整格冰块 或 被冰封的物品（两者都源于水洼结冰）
+        if (this.board.canBreakIce(r, c)) {
+            const wasFrozenItem = this.board.isFrozen(r, c);
+            // 命中：消耗道具 + 敲碎（冰块恢复原机制 / 冰封物品解冻复原）
             gameState.useHammerItem();
             this.board.breakIce(r, c);
             this.board.recalcButtons(); // 恢复的按钮/墙桥态重新结算
@@ -710,7 +918,7 @@ export default class NuonuoGame extends Component {
             this._hammerMode = false;
             this.render();
             this.onHammerModeChange?.(false);   // 通知宿主退出敲冰标识
-            this.onTip?.('已敲碎冰块');
+            this.onTip?.(wasFrozenItem ? '已解冻物品' : '已敲碎冰块');
         } else {
             // 非冰块：不消耗道具，保持破冰模式
             this.onSfx?.('invalid');
@@ -809,12 +1017,13 @@ export default class NuonuoGame extends Component {
         if (res.teleported && itemType !== undefined) {
             this.onSfx?.('teleport');
             this.checkStepLow();
-            this.playTeleportEffect(tr, tc, res.finalRow, res.finalCol, itemType);
+            this.playTeleportEffect(tr, tc, res.finalRow, res.finalCol, itemType, res.placed);
             return true;
         }
 
-        // 归位（消除）：落点格子变为 TARGET → 播放旋转缩小消失特效
-        const placed = this.board.getCell(res.finalRow, res.finalCol)?.type === CellType.TARGET;
+        // 归位（消除）：用 moveItem 返回的 placed 判定——tickWaters 可能已把刚归位的目标格冻成冰块，
+        // 事后回读格子 type 会漏判归位，导致盘面清空却永不结算（对齐源工程 v0.10.9）
+        const placed = res.placed;
         if (placed && itemType !== undefined) {
             this.onSfx?.('match');
             this.onVibrate?.('short');
@@ -878,7 +1087,7 @@ export default class NuonuoGame extends Component {
      * 传送特效：入口吸入（大变小）→ 出口沿行进方向滑出（小变大）→ 动画结束重绘 + 结算。
      * 期间不重绘棋盘，物品在源格/落点都不可见，避免与特效节点重叠穿帮。
      */
-    private playTeleportEffect(entranceRow: number, entranceCol: number, landRow: number, landCol: number, itemType: ItemType): void {
+    private playTeleportEffect(entranceRow: number, entranceCol: number, landRow: number, landCol: number, itemType: ItemType, placed: boolean): void {
         const cs = this.cellSize;
         const [ix, iy] = this.gridToBoardPos(entranceRow, entranceCol);
         const [lx, ly] = this.gridToBoardPos(landRow, landCol);
@@ -907,7 +1116,7 @@ export default class NuonuoGame extends Component {
                         pop.destroy();
                         // 动画结束：重绘最终状态；若落点是归位格，接消除特效（音/震对齐普通归位）
                         this.render();
-                        if (this.board.getCell(landRow, landCol)?.type === CellType.TARGET) {
+                        if (placed) {
                             this.onSfx?.('match');
                             this.onVibrate?.('short');
                             this.playEliminateEffect(landRow, landCol, itemType);
@@ -953,6 +1162,8 @@ export default class NuonuoGame extends Component {
             return false;
         }
         const o = JSON.parse(s);
+        // 撤销会整体换掉 grid：先中断进行中的拖拽，清掉「拿起即释放」的预览格
+        this.cancelDrag();
         this.board.grid = o.grid;
         this.stepsUsed = o.stepsUsed;
         this.board.recalcButtons();
@@ -966,10 +1177,13 @@ export default class NuonuoGame extends Component {
         this.initLevel(this.level);
     }
 
-    /** 看广告续命：步数上限 +n（宿主在广告发放后调用；对齐源工程 watchAdForSteps 的 onReward） */
+    /** 步数续命：步数上限 +n（宿主花金币买步数后调用；对齐源工程 buyExtraSteps） */
     public addSteps(n: number): void {
         if (this.maxSteps !== null) {
             this.maxSteps += n;
+            // 同步核心包的上限：续命后本关还能再买一次，价格走核心包的 stepRescueUsed，
+            // 上限不同步的话核心包读到的仍是旧上限（isStepLimitReached / stepsLeft 会失真）
+            gameState.addSteps(n);
             this.updateHud();
         }
     }
@@ -980,6 +1194,9 @@ export default class NuonuoGame extends Component {
      * 纯机制：道具消耗（全局 refreshItems）由宿主 NuonuoApp 处理。
      */
     public refresh(): void {
+        // 强干预：先中断进行中的拖拽（否则预览格残留会让机关态卡在「关闭」）
+        this.cancelDrag();
+
         // 第一步：收集所有未归位物品（按堆叠分组，同格物品保持在一起）。
         // 归位物品的格子 cell.type 已是 TARGET（placedCount>0），不会出现在 ITEM 格里。
         const groups: { row: number; col: number; stack: { type: ItemType; layer: number }[] }[] = [];
@@ -987,6 +1204,8 @@ export default class NuonuoGame extends Component {
             for (let c = 0; c < this.cols; c++) {
                 const cell = this.board.getCell(r, c);
                 if (!cell || cell.type !== CellType.ITEM) continue;
+                // 【v0.10.2】被冰封的物品不参与刷新（保持原位，需破冰锤解冻）
+                if (this.board.isFrozen(r, c)) continue;
                 const stack = (cell.stack && cell.stack.length)
                     ? cell.stack
                     : [{ type: cell.itemType!, layer: cell.layer ?? 1 }];
@@ -1006,6 +1225,7 @@ export default class NuonuoGame extends Component {
                 if (cell.type === CellType.BUTTON) continue;      // 按钮是机关格
                 if (cell.type === CellType.ACTIVE_WALL || cell.type === CellType.ACTIVE_BRIDGE) continue;
                 if (cell.type === CellType.ICE) continue;         // 冰块是永久障碍
+                if (cell.type === CellType.ITEM && this.board.isFrozen(r, c)) continue; // 冰封物品的格子不作落点
                 available.push([r, c]);
             }
         }
@@ -1094,9 +1314,9 @@ export default class NuonuoGame extends Component {
         }
 
         if (this.maxSteps !== null && this.stepsUsed >= this.maxSteps) {
-            // 步数耗尽：本关还有看广告加步数次数 → 弹「看广告 +5步」续命弹窗（对齐源工程 checkStepLimit）；
+            // 步数耗尽：本关还有金币续命次数 → 弹「消耗金币 +3步」续命弹窗（对齐源工程 checkStepLimit）；
             // 次数用完 → 直接进失败结算
-            if (gameState.adStepsLeft > 0) {
+            if (gameState.canRescueSteps) {
                 this.onResult?.({
                     win: false,
                     stepLimit: true,
@@ -1212,15 +1432,202 @@ export default class NuonuoGame extends Component {
         g.fill();
     }
 
-    private drawButtonCell(parent: Node, x: number, y: number, w: number, cs: number): void {
+    /** 按钮 / 活动门共用 id 的素材套数（button_1~4 ↔ d1~d4），对齐源工程 MAX_MECHANISM_ART */
+    private static readonly MAX_MECHANISM_ART = 4;
+
+    /** 配对 id → 素材序号（1 起始，超过 4 套取模循环复用） */
+    private static mechArtIndex(id: number | undefined): number {
+        if (!id || id < 1) return 0;
+        return ((id - 1) % NuonuoGame.MAX_MECHANISM_ART) + 1;
+    }
+
+    /**
+     * 按钮：优先 button_N 美术（N = buttonId，1~4 循环）。
+     * 弹起态 = 整格铺满；按下态 = 整体缩小 + 下沉 + 中心轻压暗
+     * （美术只有一张，用变换表达「被踩下去」）。
+     * 无素材时回退几何圆钮：弹起圆钮略凸起，按下圆钮下沉变扁。
+     */
+    private drawButtonCell(parent: Node, cell: CellData, cs: number, x: number, y: number, w: number, rad: number): void {
+        const idx = NuonuoGame.mechArtIndex(cell.buttonId);
+        const sf = idx ? NuonuoGame._sfCache.get(`button_${idx}`) : null;
+        const pressed = cell.buttonPressed === true;
+
+        if (sf) {
+            if (pressed) {
+                const size = cs * 0.9;
+                const sink = -cs * 0.05;   // Canvas 里是向下沉，Cocos y 轴向上取负
+                this.addSprite(parent, sf, size, 0, [0, sink]);
+                const n = new Node("dim");
+                n.layer = parent.layer;
+                parent.addChild(n);
+                n.setPosition(0, sink, 0);
+                n.addComponent(UITransform).setContentSize(size, size);
+                const g = n.addComponent(Graphics);
+                g.fillColor = new Color(0, 0, 0, 46);   // rgba(0,0,0,0.18)
+                g.circle(0, 0, size * 0.36);
+                g.fill();
+            } else {
+                this.addSprite(parent, sf, cs);
+            }
+            return;
+        }
+
+        // 回退：几何圆钮（按下半径略小、向下偏移，模拟下沉）
+        const cx = x + w / 2;
+        const cy = y + w / 2;
+        const radius = w * (pressed ? 0.26 : 0.30);
+        const offsetY = pressed ? -w * 0.04 : 0;
         const n = new Node("btn");
         n.layer = parent.layer;
         parent.addChild(n);
         n.addComponent(UITransform).setContentSize(cs, cs);
         const g = n.addComponent(Graphics);
-        g.fillColor = new Color(...C_BUTTON, 255);
-        g.circle(x + w / 2, y + w / 2, w * 0.3);
+        g.fillColor = new Color(0, 0, 0, 46);
+        g.circle(cx, cy - w * 0.03, w * 0.34);
         g.fill();
+        g.fillColor = pressed ? new Color(...C_BUTTON, 255) : new Color(223, 230, 233, 255);
+        g.circle(cx, cy + offsetY, radius);
+        g.fill();
+        this.addCellText(parent, cell.buttonPressed ? '●' : '○', cs, C_BROWN);
+    }
+
+    /**
+     * 活动门：未激活（按钮弹起）→ dN_close 关门（阻挡通行）；已激活 → dN_open 开门（可通行）。
+     * 门美术是竖版（宽:高 ≈ 0.78），按原比例缩放到「格高」并水平居中，避免拉伸变形。
+     * 无素材时回退色块：墙=实体/空格，桥=缺口/木板。
+     */
+    private renderDoor(parent: Node, cell: CellData, cs: number, x: number, y: number, w: number, rad: number): void {
+        const idx = NuonuoGame.mechArtIndex(cell.barrierId);
+        const active = cell.barrierActive === true;
+        const sf = idx ? NuonuoGame._sfCache.get(`door_${idx}_${active ? 'open' : 'close'}`) : null;
+
+        if (sf) {
+            this.addSpriteRatio(parent, sf, cs);
+            return;
+        }
+
+        if (cell.barrierKind === 'wall') {
+            this.fillCellRect(parent, active ? C_EMPTY : C_WALL, x, y, w, rad, cs);
+        } else {
+            this.fillCellRect(parent, active ? C_BRIDGE : C_BOARD_BG, x, y, w, rad, cs);
+        }
+    }
+
+    /** 机关配对配色（按钮 / 活动门共用，与源工程 palette 一致，按 id 取模 5） */
+    private static readonly MECH_PALETTE: RGB[] = [
+        [155, 89, 182], [231, 76, 60], [52, 152, 219], [46, 204, 113], [243, 156, 18],
+    ];
+
+    /**
+     * 【v0.10.5】物品压住按钮 / 活动门时的配对 id 角标（左上角小圆牌，画在物品之上）：
+     * 黑底 + 配对色描边 + 白字 id；激活态（按钮被压住 / 门已开）改用配对色实心 + 白描边，
+     * 让玩家一眼看出「这格下面压着哪一对按钮/门，以及它现在是通的」。
+     */
+    private drawMechanismBadge(parent: Node, cs: number, id: number, active: boolean): void {
+        const rgb = NuonuoGame.MECH_PALETTE[id % NuonuoGame.MECH_PALETTE.length];
+        const r = cs * 0.17;
+        const n = new Node("mechBadge");
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.setPosition(-cs / 2 + r + 2, cs / 2 - r - 2, 0);
+        n.addComponent(UITransform).setContentSize(r * 2, r * 2);
+        const g = n.addComponent(Graphics);
+        g.fillColor = active ? new Color(rgb[0], rgb[1], rgb[2], 255) : new Color(0, 0, 0, 191);
+        g.circle(0, 0, r);
+        g.fill();
+        g.lineWidth = 2;
+        g.strokeColor = active ? new Color(255, 255, 255, 255) : new Color(rgb[0], rgb[1], rgb[2], 255);
+        g.circle(0, 0, r);
+        g.stroke();
+
+        const labNode = new Node("id");
+        labNode.layer = n.layer;
+        n.addChild(labNode);
+        labNode.addComponent(UITransform).setContentSize(r * 2, r * 2);
+        const lab = labNode.addComponent(Label);
+        lab.string = `${id}`;
+        lab.fontSize = Math.max(12, Math.floor(r * 1.15));
+        lab.lineHeight = lab.fontSize + 2;
+        lab.isBold = true;
+        lab.color = new Color(255, 255, 255, 255);
+        lab.horizontalAlign = Label.HorizontalAlign.CENTER;
+        lab.verticalAlign = Label.VerticalAlign.CENTER;
+    }
+
+    /**
+     * 单向门方向小角标（物品压住单向门时叠加在物品之上，半透明小箭头居中）。
+     * 物品完全盖住底层的 zhangai + arr 组合，不补角标玩家看不出这格是单向门。
+     */
+    private drawOnewayBadge(parent: Node, dir: string, cs: number): void {
+        const angleMap: Record<string, number> = { left: 0, up: -90, right: 180, down: 90 };
+        const n = new Node("onewayBadge");
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.addComponent(UITransform).setContentSize(cs, cs);
+
+        const sf = NuonuoGame._sfCache.get('arr');
+        if (sf) {
+            const size = cs * 0.32;
+            const sn = new Node("arrow");
+            sn.layer = n.layer;
+            n.addChild(sn);
+            sn.addComponent(UITransform).setContentSize(size, size);
+            const spr = sn.addComponent(Sprite);
+            spr.sizeMode = Sprite.SizeMode.CUSTOM;
+            spr.spriteFrame = sf;
+            sn.angle = angleMap[dir] ?? 0;
+            n.addComponent(UIOpacity).opacity = 166;   // 0.65
+        } else {
+            this.addCellText(n, ONEWAY_ARROW[dir] ?? '→', cs, [230, 126, 34]);
+        }
+    }
+
+    /**
+     * 【v0.10.2】冰封覆盖层：物品被水洼冻住时，在物品之上盖一层半透明冰面。
+     * 与冰块视觉呼应（冰面 + 裂纹 + 右上角❄），但保留物品轮廓，让玩家看清「冰里的物品」。
+     */
+    private renderFrozenOverlay(parent: Node, cs: number): void {
+        const n = new Node("frozen");
+        n.layer = parent.layer;
+        parent.addChild(n);
+        n.addComponent(UITransform).setContentSize(cs, cs);
+        const half = cs / 2 - cs * 0.07;
+        const g = n.addComponent(Graphics);
+
+        // 冰面（半透明浅蓝）
+        g.fillColor = new Color(174, 214, 241, 140);   // rgba(174,214,241,0.55)
+        g.rect(-half, -half, half * 2, half * 2);
+        g.fill();
+        g.lineWidth = 2;
+        g.strokeColor = new Color(255, 255, 255, 230);
+        g.rect(-half, -half, half * 2, half * 2);
+        g.stroke();
+
+        // 冰裂纹（从中心向四周 4 条）
+        g.lineWidth = 1;
+        g.strokeColor = new Color(255, 255, 255, 191);
+        for (let i = 0; i < 4; i++) {
+            const angle = (Math.PI * 2 * i) / 4 + 0.3;
+            g.moveTo(0, 0);
+            g.lineTo(Math.cos(angle) * cs * 0.34, Math.sin(angle) * cs * 0.34);
+        }
+        g.stroke();
+
+        // 右上角冰晶标记（不遮挡物品主体）
+        const markSize = Math.max(18, cs * 0.3);
+        const mark = new Node("frozenMark");
+        mark.layer = parent.layer;
+        parent.addChild(mark);
+        mark.setPosition(half - markSize / 2, half - markSize / 2, 0);
+        mark.addComponent(UITransform).setContentSize(markSize, markSize);
+        const lab = mark.addComponent(Label);
+        lab.string = '❄';
+        lab.fontSize = Math.max(14, Math.floor(cs * 0.26));
+        lab.lineHeight = lab.fontSize + 2;
+        lab.isBold = true;
+        lab.color = new Color(255, 255, 255, 242);
+        lab.horizontalAlign = Label.HorizontalAlign.CENTER;
+        lab.verticalAlign = Label.VerticalAlign.CENTER;
     }
 
     private drawPortalRing(g: Graphics, cs: number): void {

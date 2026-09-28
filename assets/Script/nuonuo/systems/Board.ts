@@ -21,6 +21,14 @@ export interface MoveResult {
   teleported: boolean;    // 是否触发了传送门
   finalRow: number;      // 物品最终所在行（传送后可能和 toRow 不同）
   finalCol: number;      // 物品最终所在列（传送后可能和 toCol 不同）
+  /**
+   * 【v0.10.9】本次移动是否把物品归位（消进类型匹配的目标格）。
+   *
+   * 归位后物品已从棋盘上"消失"（不写入 itemType，只 placedCount+1），
+   * 因此调用方**必须**用本字段判断归位，不能事后回读格子 type：
+   * 同一步内若该目标格上的水洼倒计时归零，tickWaters() 会把整格改成 ICE。
+   */
+  placed: boolean;
 }
 
 export class Board {
@@ -39,8 +47,16 @@ export class Board {
 
   /** 按钮格子坐标列表：方便快速查找 */
   buttonPositions: [number, number][] = [];
-  /** 活动墙/桥格子坐标列表：方便快速查找 */
+  /** 活动门格子坐标列表：方便快速查找 */
   barrierPositions: [number, number][] = [];
+
+  /**
+   * 【v0.10.6】"拿起即释放"的临时排除格：玩家按住某格物品拖拽期间，该格在机关结算里
+   * 视为**已空**（物品被视作已离开），于是按钮立刻弹起、所连活动门立刻切换为关闭显示。
+   * 这样门的表现与逻辑同步，不必等落地才 recalcButtons。
+   * 拖拽结束（落地/回弹/撤销/刷新/换关）必须 clearDragPreview()，否则机关态会卡住。
+   */
+  private dragPreviewCell: { row: number; col: number } | null = null;
 
   constructor() {
     this.rows = 0;
@@ -53,6 +69,8 @@ export class Board {
    * @param config 关卡配置数据
    */
   loadLevel(config: LevelConfig): void {
+    // 【v0.10.6】换关兜底：清空上一次残留的拖拽预览格
+    this.dragPreviewCell = null;
     this.rows = config.grid.rows;
     this.cols = config.grid.cols;
     this.targetPositions = [];
@@ -145,8 +163,8 @@ export class Board {
       }
     }
 
-    // 第三步七分之六：放置活动墙/桥
-    // 默认未激活：墙=实体阻挡，桥=缺口阻挡；激活后均变为可通行
+    // 第三步七分之六：放置活动门
+    // 默认未激活（关门）= 阻挡通行；被按钮压住时激活（开门）= 可通行
     if (config.activeBarriers) {
       for (const b of config.activeBarriers) {
         const [row, col] = b.pos;
@@ -166,7 +184,7 @@ export class Board {
     }
 
     // 第三步四分之三：放置水洼
-    // 水洼是"附加覆盖层"，可叠加在 空格/目标格/传送门/单向门/按钮/活动墙/活动桥上，
+    // 水洼是"附加覆盖层"，可叠加在 空格/目标格/传送门/单向门/按钮/活动门上，
     // 也可在物品下方（物品放置时保留 freezeCounter）。
     // - 纯空格 → 变为 WATER 类型
     // - 其他机制格 → 保持原类型，仅附加 freezeCounter（结冰时 freezeCell 会把整格变 ICE，原机制字段保留供破冰锤恢复）
@@ -184,7 +202,7 @@ export class Board {
             cell.type = CellType.WATER;
             cell.freezeCounter = water.freezeIn;
           } else {
-            // 目标格/传送门/单向门/按钮/活动墙/桥：保留原类型，附加 freezeCounter
+            // 目标格/传送门/单向门/按钮/活动门：保留原类型，附加 freezeCounter
             cell.freezeCounter = water.freezeIn;
           }
           // 物品下方的水洼在物品放置后处理
@@ -256,7 +274,7 @@ export class Board {
     if (!cell) return false;
     // 按钮：恒可通行（物品可压住触发）
     if (cell.type === CellType.BUTTON) return true;
-    // 活动墙/桥：仅激活态可通行
+    // 活动门：仅激活态可通行
     if (cell.type === CellType.ACTIVE_WALL || cell.type === CellType.ACTIVE_BRIDGE) {
       return cell.barrierActive === true;
     }
@@ -296,7 +314,7 @@ export class Board {
     return cell.portalUses > 0;
   }
 
-  // ========== 按钮 / 活动墙/桥 ==========
+  // ========== 按钮 / 活动门 ==========
 
   /** 判断一个格子是否是按钮 */
   isButton(row: number, col: number): boolean {
@@ -305,14 +323,14 @@ export class Board {
     return cell.type === CellType.BUTTON;
   }
 
-  /** 判断一个格子是否是活动墙/桥 */
+  /** 判断一个格子是否是活动门 */
   isActiveBarrier(row: number, col: number): boolean {
     const cell = this.getCell(row, col);
     if (!cell) return false;
     return cell.type === CellType.ACTIVE_WALL || cell.type === CellType.ACTIVE_BRIDGE;
   }
 
-  /** 判断活动墙/桥当前是否处于激活态（可通行） */
+  /** 判断活动门当前是否处于激活态（可通行） */
   isBarrierActive(row: number, col: number): boolean {
     const cell = this.getCell(row, col);
     if (!cell) return false;
@@ -321,32 +339,80 @@ export class Board {
   }
 
   /**
-   * 重新结算所有按钮的按下状态，并同步刷新所连活动墙/桥的激活态。
+   * 重新结算所有按钮的按下状态，并同步刷新同组活动门的激活态。
+   *
+   * 【v0.10.8 多对多】按钮与活动门通过共享的 id 组成一个「机关组」：
+   *   一组内可以有 x 个按钮 + y 个门（x ≥ 1、y ≥ 1），不再要求一一对应。
+   *   组内**任意**一个按钮被物品压住 → 组内**所有**门一起打开（OR 逻辑）。
+   *   x=y=1 的老关卡与旧行为完全一致，无需迁移数据。
    *
    * 规则：按钮所在格若有物品停留（cell.type === ITEM 且保留了 buttonId），
-   *   即视为按下；否则弹起。按钮按下 → 同 id 的活动墙/桥激活（可通行）。
+   *   即视为按下；否则弹起。按钮按下 → 同组活动门激活（可通行）。
    *
    * 物品移到按钮上时 cell.type 变为 ITEM，但 buttonId 被保留（moveItem 中处理），
    * 因此这里通过 buttonId 字段判断"该格本质是按钮且当前压着物品"。
    * 同理按钮空置时 cell.type === BUTTON。
    */
   recalcButtons(): void {
-    // 1. 收集每个按钮 id 当前是否被压住
-    const pressedMap = new Map<number, boolean>();
+    // 1. 收集每个机关组当前是否"至少有一个按钮被压住"（组内 OR）
+    const pressedByGroup = new Map<number, boolean>();
     for (const [row, col] of this.buttonPositions) {
       const cell = this.getCell(row, col);
       if (!cell || cell.buttonId === undefined) continue;
       // 物品压住按钮：cell.type 变为 ITEM 但 buttonId 保留
-      const pressed = cell.type === CellType.ITEM;
+      // 【v0.10.6】正被玩家"拿起"（拖拽中）的物品视为已离开本格 → 按钮立即弹起、活动门立即关闭
+      const pressed = cell.type === CellType.ITEM && !this.isDragPreviewCell(row, col);
       cell.buttonPressed = pressed;
-      pressedMap.set(cell.buttonId, pressed);
+      // 【v0.10.8】组内只要有一个按钮按下，整组就算已触发（其余按钮弹起也不影响）
+      pressedByGroup.set(cell.buttonId, (pressedByGroup.get(cell.buttonId) ?? false) || pressed);
     }
-    // 2. 按按钮态刷新所有活动墙/桥
+    // 2. 按机关组状态刷新所有活动门（同组的门开/关始终一致）
     for (const [row, col] of this.barrierPositions) {
       const cell = this.getCell(row, col);
       if (!cell || cell.barrierId === undefined) continue;
-      cell.barrierActive = pressedMap.get(cell.barrierId) === true;
+      cell.barrierActive = pressedByGroup.get(cell.barrierId) === true;
     }
+  }
+
+  /**
+   * 【v0.10.8】查询某机关组当前是否有按钮处于"被压住"状态（组内 OR）。
+   *
+   * 供 PathCalculator「拖走压按钮的物品时，该门本步视为关门」的兜底判定使用：
+   * 多对多下一个门由多个按钮控制，只要**组内还有别的按钮**被压住，门就应该保持开启。
+   *
+   * @param groupId 机关组 id（即 buttonId / barrierId）
+   * @param ignoreCell 可选：把这格视为"已空"（通常传本次拖拽的起点格）
+   */
+  isButtonGroupPressed(groupId: number, ignoreCell?: { row: number; col: number }): boolean {
+    for (const [row, col] of this.buttonPositions) {
+      if (ignoreCell && ignoreCell.row === row && ignoreCell.col === col) continue;
+      if (this.isDragPreviewCell(row, col)) continue;
+      const cell = this.getCell(row, col);
+      if (!cell || cell.buttonId !== groupId) continue;
+      if (cell.type === CellType.ITEM) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 【v0.10.6】拿起物品（开始拖拽）时调用：把该格标记为"已释放"，
+   * 随后 recalcButtons() 会立刻让按钮弹起、所连活动门关闭。
+   * 仅影响机关结算，不改动棋盘数据本身（物品仍在原格，落地时才真正移动）。
+   */
+  setDragPreview(row: number, col: number): void {
+    this.dragPreviewCell = { row, col };
+  }
+
+  /** 【v0.10.6】拖拽结束/中断时调用（调用后记得 recalcButtons 结算真实状态） */
+  clearDragPreview(): void {
+    this.dragPreviewCell = null;
+  }
+
+  /** 该格是否正处于"拿起即释放"的拖拽预览中 */
+  private isDragPreviewCell(row: number, col: number): boolean {
+    return this.dragPreviewCell !== null
+      && this.dragPreviewCell.row === row
+      && this.dragPreviewCell.col === col;
   }
 
   // ========== 水洼/冰块相关方法 ==========
@@ -368,7 +434,8 @@ export class Board {
     let anyFroze = false;
     for (const [row, col] of this.waterPositions) {
       const cell = this.getCell(row, col);
-      if (!cell || cell.freezeCounter === undefined || cell.freezeCounter <= 0) continue;
+      // freezeCounter === undefined 表示该水洼已结算（已结冰 / 已随物品冻结 / 已归位格失效）
+      if (!cell || cell.freezeCounter === undefined) continue;
 
       cell.freezeCounter--;
       if (cell.freezeCounter <= 0) {
@@ -381,42 +448,36 @@ export class Board {
   }
 
   /**
-   * 将一个格子冻结为冰块
-   * 
-   * 规则：
-   * - 已归位的物品（ITEM + 类型匹配的 targetType）不受影响
-   * - 空目标格被冰封 → 变为 ICE，对应物品无法再归位
-   * - 纯空格/水洼被冰封 → 变为 ICE（永久障碍物）
-   * - 传送门被冰封 → 变为 ICE
-   * - 物品下方的水洼结冰 → 物品保持，但格子底层变为冰（物品移走后是 ICE）
+   * 水洼倒计时归零：结算该格
+   *
+   * 【v0.10.2】格子上有未归位物品时，**物品当场被冰封**（不再延迟到物品移开时）：
+   * - 格子保持 ITEM，置 `frozen = true`，清空 freezeCounter（倒计时结束）
+   * - 被冰封物品不可拖动、不可作为堆叠目标，需破冰锤解冻（或撤销回到冻结前）
+   * - 底层机制字段（portalId/onewayDir/buttonId/barrierId/targetType）原样保留，
+   *   解冻后物品移走时机制照常重现
+   *
+   * 【v0.10.3 行为变更】目标格**一律**参与结冰，不再因"已归位过物品"而豁免：
+   * - 已归位的进度（cell.placedCount / item.placed / gameState.itemsPlaced）原样保留，通关判定不受影响
+   * - 但格子变 ICE 被封死 → 该目标格无法再接收后续归位物品，需破冰锤敲开（或撤销）才能继续使用
+   * - 修正前的问题：玩家抢先把物品归位（如 34 关 [4,2] 苹果就在隔壁）→ 水洼当场失效、
+   *   倒计时无声消失，水洼对该目标格完全形同虚设
+   *
+   * 其他规则：
+   * - 无物品的格（空格/目标格/水洼/传送门/单向门/按钮/活动门）→ 整格变 ICE（永久障碍物）
    */
   private freezeCell(row: number, col: number): void {
     const cell = this.getCell(row, col);
     if (!cell) return;
 
-    // 【v0.6.2】已归位的目标格不受影响（placedCount>0 表示已容纳归位物品）
-    if (cell.type === CellType.TARGET && (cell.placedCount ?? 0) > 0) {
-      return;
-    }
-    // 兼容老逻辑：ITEM 格上类型匹配的归位态
-    if (cell.type === CellType.ITEM && cell.targetType && cell.itemType === cell.targetType) {
-      return;
-    }
-
-    // 如果格子上有未归位物品，物品保持但标记底层为冰
-    // 物品移走后格子会恢复，此时应该恢复为 ICE 而非 EMPTY
+    // 【v0.10.2】格子上有未归位物品 → 物品当场被冰封
     if (cell.type === CellType.ITEM) {
-      // 标记：物品移走后恢复为 ICE
-      // 用 targetType = undefined + 特殊标记来表示
-      // 简化处理：直接把物品冻结（物品不能移动）
-      // 实际上 GDD 说"物品下方的格子结冰"，物品还是在的
-      // 物品移走后才暴露冰块
-      // 我们用一个特殊值：freezeCounter = -1 表示已冻结
-      cell.freezeCounter = -1;
+      cell.frozen = true;
+      cell.freezeCounter = undefined;
       return;
     }
 
-    // 其他情况直接变冰块
+    // 其他情况（含已归位的目标格）直接变冰块：
+    // targetType / placedCount 等字段原样保留，破冰锤敲开即可恢复目标格与已有归位进度
     cell.type = CellType.ICE;
     cell.freezeCounter = undefined;
   }
@@ -428,28 +489,51 @@ export class Board {
     return cell.type === CellType.ICE;
   }
 
-  /** 本关当前是否存在可见的冰块（破冰锤使用前的检测） */
+  /** 【v0.10.2】判断某个格子上的物品是否被冰封（水洼倒计时归零时当场冻结） */
+  isFrozen(row: number, col: number): boolean {
+    const cell = this.getCell(row, col);
+    if (!cell) return false;
+    return cell.type === CellType.ITEM && cell.frozen === true;
+  }
+
+  /** 【v0.10.2】破冰锤可敲的目标：整格冰块(ICE) 或 被冰封的物品格 */
+  canBreakIce(row: number, col: number): boolean {
+    const cell = this.getCell(row, col);
+    if (!cell) return false;
+    return cell.type === CellType.ICE || (cell.type === CellType.ITEM && cell.frozen === true);
+  }
+
+  /** 本关当前是否存在可被破冰锤敲碎的目标（可见冰块 或 被冰封物品） */
   hasAnyIce(): boolean {
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
-        if (this.grid[r][c].type === CellType.ICE) return true;
+        if (this.canBreakIce(r, c)) return true;
       }
     }
     return false;
   }
 
   /**
-   * 破冰锤：敲碎一块冰块，恢复其结冰前的原机制。
+   * 破冰锤：敲碎冰块 / 解冻被冰封的物品。
    *
-   * 结冰时（freezeCell）只把 type 改为 ICE，原机制字段（portalId/onewayDir/buttonId/
-   * barrierId/barrierKind/targetType）都被保留，这里按优先级恢复：
-   *   传送门 > 单向门 > 按钮 > 活动墙/桥 > 目标格 > 空格
+   * - 被冰封的物品格（ITEM + frozen）：解冻，物品留在原格恢复可拖动，底层机制字段原样保留
+   * - 整格冰块（ICE）：恢复其结冰前的原机制。结冰时（freezeCell）只把 type 改为 ICE，
+   *   原机制字段（portalId/onewayDir/buttonId/barrierId/barrierKind/targetType）都被保留，
+   *   这里按优先级恢复：传送门 > 单向门 > 按钮 > 活动门 > 目标格 > 空格
    *
-   * @returns 是否成功敲碎（目标不是冰块时返回 false，不消耗道具）
+   * @returns 是否成功（目标既不是冰块也不是冰封物品时返回 false，不消耗道具）
    */
   breakIce(row: number, col: number): boolean {
     const cell = this.getCell(row, col);
-    if (!cell || cell.type !== CellType.ICE) return false;
+    if (!cell) return false;
+
+    // 【v0.10.2】被冰封的物品：解冻（物品保留在格子上，机制字段不动）
+    if (cell.type === CellType.ITEM && cell.frozen === true) {
+      cell.frozen = undefined;
+      return true;
+    }
+
+    if (cell.type !== CellType.ICE) return false;
 
     if (cell.portalId !== undefined) {
       cell.type = CellType.PORTAL;
@@ -462,8 +546,9 @@ export class Board {
       cell.type = cell.barrierKind === 'wall' ? CellType.ACTIVE_WALL : CellType.ACTIVE_BRIDGE;
       cell.barrierActive = false;
     } else if (cell.targetType !== undefined) {
+      // 【v0.10.3】恢复目标格：保留已有归位进度（已归位过的目标格被冰封时 placedCount>0）
       cell.type = CellType.TARGET;
-      cell.placedCount = 0; // 空目标格被冰封，恢复后无归位物品
+      if (cell.placedCount === undefined) cell.placedCount = 0;
     } else {
       cell.type = CellType.EMPTY;
     }
@@ -525,7 +610,7 @@ export class Board {
 
   /**
    * 判断一个格子是否是障碍物
-   * 活动墙/桥未激活时视为障碍物（激活后可通行）
+   * 活动门未激活时视为障碍物（激活后可通行）
    * 冰块（ICE）是永久障碍物，也视为障碍物
    */
   isObstacle(row: number, col: number): boolean {
@@ -585,6 +670,7 @@ export class Board {
   canDrag(row: number, col: number): boolean {
     const cell = this.getCell(row, col);
     if (!cell || cell.type !== CellType.ITEM) return false;
+    if (cell.frozen) return false; // 【v0.10.2】被冰封的物品不可拖动（需破冰锤解冻）
     return (cell.layer ?? 1) === 1;
   }
 
@@ -612,6 +698,7 @@ export class Board {
       teleported: false,
       finalRow: toRow,
       finalCol: toCol,
+      placed: false,
     };
 
     const fromCell = this.getCell(fromRow, fromCol);
@@ -619,16 +706,22 @@ export class Board {
 
     // 验证：起始格必须有物品
     if (!fromCell || fromCell.type !== CellType.ITEM) return result;
-    // 验证：目标格必须可达（空格/目标格/传送门/水洼/单向门/按钮/激活的活动墙·桥）
+    // 【v0.10.2】被冰封的物品不可移动（需先用破冰锤解冻）
+    if (fromCell.frozen) return result;
+    // 验证：目标格必须可达（空格/目标格/传送门/水洼/单向门/按钮）
     // 注意：单向门的进入方向限制由 PathCalculator 在可达性计算时把关，这里只校验格子类型
+    // 【v0.10.6】活动门不再作为落点：门是"通道"不是"停车位"，
+    // 一旦允许停留，按钮释放后就会出现"物品压在关着的门上"的非法状态
+    // （可达性侧同步见 PathCalculator.calculateReachable）
     const isReachableDest = (t: CellType) =>
       t === CellType.EMPTY || t === CellType.TARGET || t === CellType.PORTAL
-      || t === CellType.WATER || t === CellType.ONEWAY || t === CellType.BUTTON
-      || ((t === CellType.ACTIVE_WALL || t === CellType.ACTIVE_BRIDGE));
+      || t === CellType.WATER || t === CellType.ONEWAY || t === CellType.BUTTON;
     // 【v0.8.9/A】已有物品的格子：仅当堆叠未满 MAX_STACK_LAYERS 时可作为目的地
     // （撤销放回堆叠格；普通拖拽已被 PathCalculator 过滤，玩家不会直接落到物品格上）
+    // 【v0.10.2】被冰封的物品格不可作为堆叠目的地（冰面封死）
     const isStackableDest =
-      !!toCell && toCell.type === CellType.ITEM && (toCell.stack?.length ?? 1) < GameConfig.MAX_STACK_LAYERS;
+      !!toCell && toCell.type === CellType.ITEM && !toCell.frozen
+      && (toCell.stack?.length ?? 1) < GameConfig.MAX_STACK_LAYERS;
     if (!toCell || (!isReachableDest(toCell.type) && !isStackableDest)) return result;
 
     // ========== 传送门处理 ==========
@@ -659,8 +752,8 @@ export class Board {
       const landRow = exit[0] + dirRow;
       const landCol = exit[1] + dirCol;
       const landCell = this.getCell(landRow, landCol);
-      // 【v0.8.8/B】落点 = 可合法放置物品的格子（EMPTY/TARGET/WATER/ONEWAY/BUTTON/激活的活动墙·桥），
-      // 含目标格（传送后可直接归位消除）；但排除：障碍/未激活墙·桥、越界、以及任何传送门（避免无限传送）。
+      // 【v0.8.8/B】落点 = 可合法放置物品的格子（EMPTY/TARGET/WATER/ONEWAY/BUTTON），
+      // 含目标格（传送后可直接归位消除）；但排除：障碍/活动门（【v0.10.6】门是通道，不可停留）、越界、以及任何传送门（避免无限传送）。
       // 【v0.8.9/A】出口落点若已有物品且堆叠未满 MAX_STACK_LAYERS，允许直接堆叠上去（方案 A：传送门出口堆叠特例）
       // 【bug 修复】落点若是单向门（含被物品压住、onewayDir 仍保留的单向门底格），
       // 必须校验"钻出方向 == 门箭头方向"，否则视为不可达、阻止传送。
@@ -669,8 +762,10 @@ export class Board {
         landCell?.onewayDir === undefined ||
         (ONEWAY_DIR_VECTORS[landCell.onewayDir][0] === dirRow &&
           ONEWAY_DIR_VECTORS[landCell.onewayDir][1] === dirCol);
+      // 【v0.10.2】被冰封的物品格不能作为传送落点堆叠目标
       const isLandingStackable =
-        landCell?.type === CellType.ITEM && (landCell.stack?.length ?? 1) < GameConfig.MAX_STACK_LAYERS;
+        landCell?.type === CellType.ITEM && !landCell.frozen
+        && (landCell.stack?.length ?? 1) < GameConfig.MAX_STACK_LAYERS;
       const isLandingValid =
         !!landCell &&
         !this.isObstacle(landRow, landCol) &&
@@ -705,13 +800,13 @@ export class Board {
     // 保存起始格的传送门信息（物品移走后需要恢复）
     const fromPortalId = fromCell.portalId;
     const fromPortalUses = fromCell.portalUses;
-    // 保存起始格的冻结状态（-1 = 已冻结，物品移走后恢复为 ICE）
+    // 保存起始格的水洼倒计时（>0 = 未结冰，物品移走后保留；被冰封的物品已被上面拦截，不会走到这里）
     const fromFreezeCounter = fromCell.freezeCounter;
     // 保存起始格的单向门方向（物品移走后需要恢复为单向门）
     const fromOnewayDir = fromCell.onewayDir;
     // 保存起始格的按钮信息（物品移走后需要恢复为按钮）
     const fromButtonId = fromCell.buttonId;
-    // 保存起始格的活动墙/桥信息（物品移走后需要恢复为活动墙/桥）
+    // 保存起始格的活动门信息（物品移走后需要恢复为活动门）
     const fromBarrierId = fromCell.barrierId;
     const fromBarrierKind = fromCell.barrierKind;
 
@@ -729,7 +824,7 @@ export class Board {
     const toOnewayDir = toCell.onewayDir;
     // 保存目标格的按钮信息（物品放上去后需要保留，便于 recalcButtons 判断"压住"）
     const toButtonId = toCell.buttonId;
-    // 保存目标格的活动墙/桥信息（物品放上去后需要保留）
+    // 保存目标格的活动门信息（物品放上去后需要保留）
     const toBarrierId = toCell.barrierId;
     const toBarrierKind = toCell.barrierKind;
 
@@ -737,6 +832,9 @@ export class Board {
       // 归位：物品消失进目标格，目标格保持 TARGET，容量 +1
       toCell.type = CellType.TARGET;
       toCell.placedCount = (toCell.placedCount ?? 0) + 1;
+      // 【v0.10.9】把"已归位"作为结果返回：调用方据此记账并播放归位反馈，
+      // 不再事后回读格子 type（同一步内水洼结冰会把该格改成 ICE → 漏记归位）
+      result.placed = true;
       // 不写入 itemType/stack（物品已"消除"）
       toCell.portalId = toPortalId;
       toCell.portalUses = toPortalUses;
@@ -747,7 +845,7 @@ export class Board {
       toCell.barrierKind = toBarrierKind;
       // targetType 保持不变
     } else {
-      // 非归位：物品留在目标格上（类型不匹配，或落到空格/传送门出口空格/按钮/活动墙·桥）
+      // 非归位：物品留在目标格上（类型不匹配，或落到空格/传送门出口空格/按钮/活动门）
       // 【v0.8.9/A】传送门出口堆叠：若落点原本已是物品格，保留原堆叠，新物品作为顶层压入，原各层下移一层
       const existingStack =
         toCell.type === CellType.ITEM
@@ -787,21 +885,10 @@ export class Board {
       fromCell.stack = undefined;
       fromCell.itemType = undefined;
       fromCell.layer = undefined;
+      // 【v0.10.2】解除冰封标记兜底（被冰封物品已在 moveItem 入口拦截，正常不会走到这里）
+      fromCell.frozen = undefined;
 
-      if (fromFreezeCounter === -1) {
-        // 已冻结，恢复为冰块
-        fromCell.type = CellType.ICE;
-        fromCell.freezeCounter = undefined;
-        fromCell.portalId = undefined;
-        fromCell.portalUses = undefined;
-        fromCell.targetType = undefined;
-        fromCell.onewayDir = undefined;
-        fromCell.buttonId = undefined;
-        fromCell.buttonPressed = undefined;
-        fromCell.barrierId = undefined;
-        fromCell.barrierKind = undefined;
-        fromCell.barrierActive = undefined;
-      } else if (fromPortalId !== undefined) {
+      if (fromPortalId !== undefined) {
         // 原本是传送门，恢复为传送门
         fromCell.type = CellType.PORTAL;
         fromCell.portalId = fromPortalId;
@@ -817,7 +904,7 @@ export class Board {
         fromCell.buttonId = fromButtonId;
         fromCell.buttonPressed = false;
       } else if (fromBarrierId !== undefined) {
-        // 原本是活动墙/桥，恢复为对应类型（激活态稍后由 recalcButtons 统一结算）
+        // 原本是活动门，恢复为对应类型（激活态稍后由 recalcButtons 统一结算）
         fromCell.type = fromBarrierKind === 'wall' ? CellType.ACTIVE_WALL : CellType.ACTIVE_BRIDGE;
         fromCell.barrierId = fromBarrierId;
         fromCell.barrierKind = fromBarrierKind;
@@ -831,7 +918,7 @@ export class Board {
         fromCell.targetType = undefined;
       }
 
-      // 恢复水洼倒计时：未结冰（>0）的倒计时需要保留（-1 已在 ICE 分支处理，undefined=无水洼）
+      // 恢复水洼倒计时：未结算（>0）的倒计时保留；undefined = 无水洼 / 已结算（结冰或已随物品冻结）
       if (fromFreezeCounter !== undefined && fromFreezeCounter > 0) {
         fromCell.freezeCounter = fromFreezeCounter;
       }
@@ -969,9 +1056,11 @@ export class Board {
   /**
    * 用快照恢复棋盘网格（快照式撤销用）。
    * 恢复后所有格子的状态（传送门次数 portalUses、水洼倒计时/冰块 freezeCounter、
-   * 按钮/墙桥态、堆叠 stack 等）都会回到快照时刻。
+   * 按钮/活动门态、堆叠 stack 等）都会回到快照时刻。
    */
   restore(grid: CellData[][]): void {
+    // 【v0.10.6】撤销兜底：快照不含拖拽预览态，恢复时一并清空
+    this.dragPreviewCell = null;
     this.grid = grid.map(row => row.map(cell => this.cloneCell(cell)));
   }
 

@@ -19,7 +19,7 @@
  */
 
 import { Board } from './Board';
-import { ONEWAY_DIR_VECTORS, ReachableCell } from '../types/index';
+import { CellData, ONEWAY_DIR_VECTORS, ReachableCell } from '../types/index';
 
 export class PathCalculator {
   private board: Board;
@@ -51,6 +51,25 @@ export class PathCalculator {
     const startCell = this.board.getCell(row, col);
     const startOnewayDir = startCell?.onewayDir;
 
+    // 【v0.10.6】起点格正压着按钮（cell.buttonId 保留）：物品一旦被拖离，这只按钮立刻弹起、
+    // 同组的活动门随之关闭。所以本步的可达性计算必须把它对应的门视为"关门"，
+    // 否则会出现漏洞：拖走压按钮的物品时，它穿过自己刚关闭的门、甚至停到门格上
+    // （35 关实测：按钮上物品移走后门已关，物品却留在门里，按钮处空无一物）。
+    // 【v0.10.8 多对多】一个组可能有多个按钮：只有**组内没有其它按钮仍被压住**时，本步才关门。
+    const releasedGroupId = startCell?.buttonId;
+
+    /**
+     * 【v0.10.6】该格是否阻挡通行：
+     * - 活动门未激活 → 关门，等同障碍
+     * - 活动门激活，但本步释放的按钮所在机关组已无人压住（多对多下需组内全弹起）→ 本步视为关门
+     */
+    const isBarrierBlocking = (cell: CellData): boolean => {
+      if (cell.type !== 'active_wall' && cell.type !== 'active_bridge') return false;
+      if (cell.barrierActive !== true) return true;
+      if (releasedGroupId === undefined || cell.barrierId !== releasedGroupId) return false;
+      return !this.board.isButtonGroupPressed(releasedGroupId, { row, col });
+    };
+
     for (const [dr, dc] of directions) {
       // 起点是单向门格：仅箭头同向可通行（方案 B：严格单向通道）
       if (startOnewayDir) {
@@ -68,11 +87,8 @@ export class PathCalculator {
         // 如果碰到障碍物或冰块，停
         if (!cell || cell.type === 'obstacle' || cell.type === 'ice') break;
 
-        // 活动墙/桥：未激活（barrierActive !== true）视为障碍物，挡住路径
-        if ((cell.type === 'active_wall' || cell.type === 'active_bridge')
-          && cell.barrierActive !== true) {
-          break;
-        }
+        // 活动门：关门（含"本步被释放的按钮所连的门"，见 isBarrierBlocking）挡住路径
+        if (isBarrierBlocking(cell)) break;
 
         // 如果碰到物品，不能走也不能停
         if (cell.type === 'item') break;
@@ -85,7 +101,7 @@ export class PathCalculator {
           if (!canPass) break;
         }
 
-        // 空格、目标格、传送门、按钮、激活的活动墙/桥：都可以停在这里
+        // 空格、目标格、传送门、按钮：都可以停在这里
         // 但次数用完的传送门不可作为目的地
         const isPortalExhausted =
           cell.type === 'portal' &&
@@ -95,6 +111,16 @@ export class PathCalculator {
           // 传送门用完了，不能停但可以穿过吗？
           // 设计选择：用完的传送门变为不可穿越（像障碍物一样）
           break;
+        }
+
+        // 【v0.10.6】开着的活动门是"通道"不是"停车位"：物品可以穿过，但不能停在门格上。
+        // 否则按钮一释放、门重新关闭，就会留下"物品压在关着的门上"的非法状态
+        // （35 关实测：物品停在门格上后按钮弹起，门关着而物品仍在门里）。
+        // 门格上若已有物品（老存档 / 编辑器手工摆放）时 type === 'item'，上面已 break，不会走到这里。
+        if (cell.type === 'active_wall' || cell.type === 'active_bridge') {
+          r += dr;
+          c += dc;
+          continue;
         }
 
         result.push({

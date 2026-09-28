@@ -32,6 +32,7 @@ export class GameState {
       musicEnabled: true,   // 背景音乐开关
       sfxEnabled: true,     // 音效开关
       vibrationEnabled: true, // 震动开关
+      tapMode: false,       // 【v0.13.3】操作模式：false=长按拖动（默认）/ true=点击选择
       soundEnabled: true,   // 旧版统一开关（仅存档兼容）
       moveCount: 0,
       itemsPlaced: 0,
@@ -45,15 +46,23 @@ export class GameState {
       undoItems: GameConfig.INITIAL_ITEMS.undo,
       refreshItems: GameConfig.INITIAL_ITEMS.refresh,
       hammerItems: GameConfig.INITIAL_ITEMS.hammer,
+      // 【已停用·提示道具 2026-09-20】提示功能整体下线
+      // hintItems: GameConfig.INITIAL_ITEMS.hint,
       levelRefreshSpent: 0,
-      adStepsUsed: 0,
-      maxAdSteps: GameConfig.AD_LIMITS.steps,
+      coins: GameConfig.INITIAL_COINS,
+      coinRewardedLevels: [],
+      coinInitGranted: true,   // 新玩家：初始金币已随上面一行发放完毕
+      stepRescueUsed: 0,
+      maxStepRescue: GameConfig.STEP_RESCUE_COSTS.length,
       adUndoUsed: 0,
       adUndoMax: GameConfig.AD_LIMITS.undo,
       adRefreshUsed: 0,
       adRefreshMax: GameConfig.AD_LIMITS.refresh,
       adHammerUsed: 0,
       adHammerMax: GameConfig.AD_LIMITS.hammer,
+      // 【已停用·提示道具 2026-09-20】
+      // adHintUsed: 0,
+      // adHintMax: GameConfig.AD_LIMITS.hint,
     };
     // 从本地存储加载数据（如果有的话）
     this.loadFromStorage();
@@ -82,6 +91,12 @@ export class GameState {
 
   /** 震动是否开启 */
   get vibrationEnabled(): boolean { return this.data.vibrationEnabled; }
+
+  /**
+   * 【v0.13.3】操作模式：false = 长按拖动（默认）/ true = 点击选择
+   * 点击模式：点一下物品拿起 → 再点目标格放下
+   */
+  get tapMode(): boolean { return this.data.tapMode; }
 
   /** 【兼容】旧版统一开关：音乐与音效同时开启才为 true */
   get soundEnabled(): boolean { return this.data.musicEnabled && this.data.sfxEnabled; }
@@ -131,23 +146,39 @@ export class GameState {
   /** 【破冰锤】全局破冰锤道具数量 */
   get hammerItems(): number { return this.data.hammerItems; }
 
+  // 【已停用·提示道具 2026-09-20】提示功能整体下线，以下读数一并注释
+  // /** 【提示】全局提示道具数量（跨关卡） */
+  // get hintItems(): number { return this.data.hintItems; }
+
   /** 【每日奖励】本关消耗的刷新道具数（结算统计用） */
   get levelRefreshSpent(): number { return this.data.levelRefreshSpent; }
 
-  /** 【广告续命】本关已看广告加步数次数 */
-  get adStepsUsed(): number { return this.data.adStepsUsed; }
+  /** 【货币·金币】当前持有金币 */
+  get coins(): number { return this.data.coins; }
 
-  /** 【广告续命】本关可看广告加步数上限（默认 3） */
-  get maxAdSteps(): number { return this.data.maxAdSteps; }
+  /** 【步数续命】本关已用金币买步数的次数 */
+  get stepRescueUsed(): number { return this.data.stepRescueUsed; }
 
-  /** 【广告续命】本关剩余可看广告加步数次数 */
-  get adStepsLeft(): number {
-    return Math.max(0, this.data.maxAdSteps - this.data.adStepsUsed);
+  /** 【步数续命】本关可买步数的次数上限（= GameConfig.STEP_RESCUE_COSTS.length） */
+  get maxStepRescue(): number { return this.data.maxStepRescue; }
+
+  /** 【步数续命】本关剩余可买步数次数 */
+  get stepRescueLeft(): number {
+    return Math.max(0, this.data.maxStepRescue - this.data.stepRescueUsed);
   }
 
-  /** 【广告续命】本关是否还能看广告加步数 */
-  get hasAdStepsLeft(): boolean {
-    return this.data.maxSteps !== null && this.adStepsLeft > 0;
+  /** 【步数续命】本关是否还能用金币买步数（无步数限制的关卡恒为 false） */
+  get canRescueSteps(): boolean {
+    return this.data.maxSteps !== null && this.stepRescueLeft > 0;
+  }
+
+  /**
+   * 【步数续命】下一次购买步数需要的金币。
+   * 次数用尽时返回最后一次的价格（仅用于文案展示，能否购买请判断 canRescueSteps）。
+   */
+  get nextStepRescueCost(): number {
+    const costs = GameConfig.STEP_RESCUE_COSTS;
+    return costs[Math.min(this.data.stepRescueUsed, costs.length - 1)] ?? 0;
   }
 
   /** 【广告续命】本关已看广告换撤销道具次数 */
@@ -198,6 +229,23 @@ export class GameState {
     return this.adHammerLeft > 0;
   }
 
+  // 【已停用·提示道具 2026-09-20】提示广告换取次数相关读数一并注释
+  // /** 【广告续命】本关已看广告换提示道具次数 */
+  // get adHintUsed(): number { return this.data.adHintUsed; }
+  //
+  // /** 【广告续命】本关可看广告换提示道具上限 */
+  // get adHintMax(): number { return this.data.adHintMax; }
+  //
+  // /** 【广告续命】本关剩余可看广告换提示道具次数 */
+  // get adHintLeft(): number {
+  //   return Math.max(0, this.data.adHintMax - this.data.adHintUsed);
+  // }
+  //
+  // /** 【广告续命】本关是否还能看广告换提示道具 */
+  // get hasAdHintLeft(): boolean {
+  //   return this.adHintLeft > 0;
+  // }
+
   // ========== 写入方法 ==========
 
   /**
@@ -239,6 +287,15 @@ export class GameState {
   /** 切换震动开关 */
   toggleVibration(): void {
     this.data.vibrationEnabled = !this.data.vibrationEnabled;
+    this.saveToStorage();
+  }
+
+  /**
+   * 【v0.13.3】切换操作模式（长按拖动 ⇄ 点击选择）
+   * 立即落盘：这是玩家偏好，下次进入游戏要记住
+   */
+  toggleTapMode(): void {
+    this.data.tapMode = !this.data.tapMode;
     this.saveToStorage();
   }
 
@@ -336,6 +393,21 @@ export class GameState {
     return true;
   }
 
+  // 【已停用·提示道具 2026-09-20】提示道具的增减入口一并注释
+  // /** 增加全局提示道具（v0.12.0 提示替换刷新入口） */
+  // addHintItems(n: number): void {
+  //   this.data.hintItems += n;
+  //   this.saveToStorage();
+  // }
+  //
+  // /** 消耗一个全局提示道具（成功返回 true） */
+  // useHintItem(): boolean {
+  //   if (this.data.hintItems <= 0) return false;
+  //   this.data.hintItems--;
+  //   this.saveToStorage();
+  //   return true;
+  // }
+
   /** 增加全局破冰锤道具 */
   addHammerItems(n: number): void {
     this.data.hammerItems += n;
@@ -350,16 +422,53 @@ export class GameState {
     return true;
   }
 
-  /** 【广告续命】记录一次看广告加步数（调用前应先判断 hasAdStepsLeft） */
-  recordAdStep(): void {
-    if (this.data.adStepsUsed < this.data.maxAdSteps) {
-      this.data.adStepsUsed++;
+  /** 【货币·金币】增加金币（通关奖励/广告翻倍等），立即写入存档 */
+  addCoins(n: number): void {
+    if (n <= 0) return;
+    this.data.coins += n;
+    this.saveToStorage();
+  }
+
+  /** 【货币·金币】金币是否足够支付 amount */
+  canAfford(amount: number): boolean {
+    return this.data.coins >= amount;
+  }
+
+  /**
+   * 【货币·金币】扣除金币。
+   * @returns true=扣费成功；false=金币不足（不扣除任何金币，调用方应先判断）
+   */
+  spendCoins(amount: number): boolean {
+    if (amount <= 0) return true;
+    if (!this.canAfford(amount)) return false;
+    this.data.coins -= amount;
+    this.saveToStorage();
+    return true;
+  }
+
+  /** 【货币·金币】该关是否已发放过通关金币（首次通关才发，防重复刷） */
+  hasCoinRewardFor(level: number): boolean {
+    return this.data.coinRewardedLevels.includes(level);
+  }
+
+  /** 【货币·金币】登记"该关通关金币已发放" */
+  markCoinReward(level: number): void {
+    if (!this.hasCoinRewardFor(level)) {
+      this.data.coinRewardedLevels.push(level);
+      this.saveToStorage();
     }
   }
 
-  /** 【广告续命】设置本关看广告加步数上限（默认见 GameConfig.AD_LIMITS.steps） */
-  setMaxAdSteps(max: number): void {
-    this.data.maxAdSteps = Math.max(0, max);
+  /** 【步数续命】记录一次金币买步数（调用前应先判断 canRescueSteps 且已扣费） */
+  recordStepRescue(): void {
+    if (this.data.stepRescueUsed < this.data.maxStepRescue) {
+      this.data.stepRescueUsed++;
+    }
+  }
+
+  /** 【步数续命】设置本关可买步数次数上限（默认见 GameConfig.STEP_RESCUE_COSTS） */
+  setMaxStepRescue(max: number): void {
+    this.data.maxStepRescue = Math.max(0, max);
   }
 
   /** 【广告续命】记录一次看广告换撤销道具（调用前应先判断 hasAdUndoLeft） */
@@ -382,6 +491,14 @@ export class GameState {
       this.data.adHammerUsed++;
     }
   }
+
+  // 【已停用·提示道具 2026-09-20】提示广告次数记录一并注释
+  // /** 【广告续命】记录一次看广告换提示道具（调用前应先判断 hasAdHintLeft） */
+  // recordAdHint(): void {
+  //   if (this.data.adHintUsed < this.data.adHintMax) {
+  //     this.data.adHintUsed++;
+  //   }
+  // }
 
   /** 暂停 */
   pause(): void {
@@ -438,14 +555,17 @@ export class GameState {
     this.data.maxRefreshes = 3;
     this.data.stepsUsed = 0;
     this.data.maxSteps = null;
-    this.data.adStepsUsed = 0;
-    this.data.maxAdSteps = GameConfig.AD_LIMITS.steps;
+    this.data.stepRescueUsed = 0;
+    this.data.maxStepRescue = GameConfig.STEP_RESCUE_COSTS.length;
     this.data.adUndoUsed = 0;
     this.data.adUndoMax = GameConfig.AD_LIMITS.undo;
     this.data.adRefreshUsed = 0;
     this.data.adRefreshMax = GameConfig.AD_LIMITS.refresh;
     this.data.adHammerUsed = 0;
     this.data.adHammerMax = GameConfig.AD_LIMITS.hammer;
+    // 【已停用·提示道具 2026-09-20】
+    // this.data.adHintUsed = 0;
+    // this.data.adHintMax = GameConfig.AD_LIMITS.hint;
   }
 
   /** 【选关流程】把解锁进度设为指定关卡；只增不减（重玩低关卡不拉低进度；重进游戏从最高解锁关续玩） */
@@ -482,11 +602,31 @@ export class GameState {
         this.data.musicEnabled = parsed.musicEnabled ?? parsed.soundEnabled ?? true;
         this.data.sfxEnabled = parsed.sfxEnabled ?? parsed.soundEnabled ?? true;
         this.data.vibrationEnabled = parsed.vibrationEnabled ?? true;
+        // 【v0.13.3】操作模式：老存档无该字段 → 默认长按拖动（false）
+        this.data.tapMode = parsed.tapMode ?? false;
         this.data.soundEnabled = this.data.musicEnabled && this.data.sfxEnabled;
         // 存档中无道具字段（新玩家/老版本存档）时，发放初始道具；已有值则尊重存档
         this.data.undoItems = parsed.undoItems ?? GameConfig.INITIAL_ITEMS.undo;
         this.data.refreshItems = parsed.refreshItems ?? GameConfig.INITIAL_ITEMS.refresh;
         this.data.hammerItems = parsed.hammerItems ?? GameConfig.INITIAL_ITEMS.hammer;
+        // 【已停用·提示道具 2026-09-20】不再从存档读取提示道具（旧存档该字段直接忽略）
+        // this.data.hintItems = parsed.hintItems ?? GameConfig.INITIAL_ITEMS.hint;
+        // 【v0.13.0 货币】已发奖关卡列表
+        this.data.coinRewardedLevels = Array.isArray(parsed.coinRewardedLevels)
+          ? parsed.coinRewardedLevels
+          : [];
+        // 【v0.13.1 货币】新手金币只发一次，用 coinInitGranted 标记：
+        // - 标记存在 → 完全尊重存档余额（玩家花掉的金币不会被重新补上）
+        // - 标记缺失（v0.13.1 之前的老存档，当时 INITIAL_COINS=0）→ 在原有余额上补发一次新手金币
+        if (parsed.coinInitGranted) {
+          this.data.coins = parsed.coins ?? 0;
+        } else {
+          this.data.coins = (parsed.coins ?? 0) + GameConfig.INITIAL_COINS;
+          this.data.coinInitGranted = true;
+          console.log(`[GameState] 老存档补发新手金币 +${GameConfig.INITIAL_COINS}（当前余额 ${this.data.coins}）`);
+          // 立刻落盘：否则玩家若没触发任何存档就退出，下次进入会再补发一次
+          this.saveToStorage();
+        }
       }
     } catch (e) {
       // 存储不可用时静默失败（如宿主未注入适配器）
@@ -502,10 +642,16 @@ export class GameState {
         musicEnabled: this.data.musicEnabled,
         sfxEnabled: this.data.sfxEnabled,
         vibrationEnabled: this.data.vibrationEnabled,
+        tapMode: this.data.tapMode, // 【v0.13.3】操作模式偏好（长按拖动 / 点击选择）
         soundEnabled: this.data.soundEnabled, // 保留旧字段，便于回退到旧版本
         undoItems: this.data.undoItems,
         refreshItems: this.data.refreshItems,
         hammerItems: this.data.hammerItems,
+        // 【已停用·提示道具 2026-09-20】不再写入提示道具
+        // hintItems: this.data.hintItems,
+        coins: this.data.coins,
+        coinRewardedLevels: this.data.coinRewardedLevels,
+        coinInitGranted: this.data.coinInitGranted,
       }));
     } catch (e) {
       console.warn('[GameState] 保存存档失败:', e);

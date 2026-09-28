@@ -147,7 +147,7 @@ export class WeChatPlatHelper {
         this.curVideoEnum = videoEnum;
     }
 
-    private static videoCallback = null;
+    private static videoCallback = null; 
     private static showVideoResult(completed: any) {
         if (this.videoCallback) {
             this.videoCallback(completed);
@@ -379,11 +379,14 @@ export class WeChatPlatHelper {
 const reportIds = ["BCBgAAoXHx5d1QpzuGCJR1"];
 
 
+/**
+ * 激励视频广告位表：下标 = `VideoEnum.RewardedVideo` 的枚举值，两边必须一一对应。
+ * 刷新 / 广告续命加步数两个广告位已下线（微信后台已删除），不再占位。
+ */
 const videoIds = [
-    "adunit-27790c1980b36ebb",   // 道具 - 撤回
-    "adunit-ea1f4d5ea4698881",   // 道具 - 刷新
-    "adunit-xxxxxxxxxxxxxxxx",   // 广告续命 - 加步数（预留，接入正式广告时替换）
-    "adunit-xxxxxxxxxxxxxxxx",   // 道具 - 破冰锤（预留，接入正式广告时替换）
+    "adunit-d6a4943d81f9dd7e",   // 道具 - 撤回（Prop_Undo = 0）
+    "adunit-0dd20568a011e893",   // 道具 - 破冰锤（Prop_Hammer = 1）
+    "adunit-7bd6fea3a33e5f33",   // 结算 - 通关金币翻倍（Coin_Double = 2）
 ]
 
 
