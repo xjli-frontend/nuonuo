@@ -25,6 +25,26 @@ import { SoundManager, SfxName } from './SoundManager';
 
 type RGB = [number, number, number];
 
+/**
+ * 游戏里显示的版本号 —— **只认运行时注入的那个**。
+ *
+ * extensions/nuonuo-release 每次构建完会往产物的 `game.js` 顶部插一行
+ * `GameGlobal.__NUONUO_VERSION__ = '1.0.10'`；读不到（编辑器预览、编辑器自带构建，
+ * 或者插件没打版本号）就显示「开发版」。
+ *
+ * 不再读「编译进包的常量」那种做法：微信开发者工具会缓存**编译过的脚本 bundle**
+ * （`assets/main/index.js`），改了常量它经常不重新编译 —— 「改了版本号、构建也成功、
+ * 游戏里还是上一个号」就是这么来的。`game.js` 是入口脚本，每次都会被重新读取。
+ */
+declare const GameGlobal: any;
+function resolveBuildVersion(): string {
+    try {
+        const injected = typeof GameGlobal !== 'undefined' && GameGlobal && GameGlobal.__NUONUO_VERSION__;
+        if (injected) return String(injected);
+    } catch (_) { /* 读不到就当没有 */ }
+    return '';
+}
+
 // ========== 原版配色（挪挪收纳屋 GameConfig.ts） ==========
 const C_MENU_BG: RGB = [15, 52, 96];        // #0f3460
 const C_PAGE_BG: RGB = [22, 33, 62];        // #16213e
@@ -38,9 +58,9 @@ const C_BROWN: RGB = [135, 94, 45];        // #875E2D 关卡界面文字/数字�
 // 关卡背景蒙版：黑色半透明压暗（毛玻璃效果的一部分，压不住背景就调大，挡太多就调小）
 const LEVEL_BG_MASK_ALPHA = 30;
 
-// ========== 布局（设计分辨率 768×1344，布局坐标按设计稿写死） ==========
+// ========== 布局（设计分辨率 750×1344，布局坐标按设计稿写死） ==========
 // 全屏底板/遮罩不按设计分辨率铺，统一用 view.getVisibleSize()（见 visSize）：
-// 真机宽高比与设计分辨率不同时可见区会扩展，固定 768×1344 会铺不满留边。
+// 真机宽高比与设计分辨率不同时可见区会扩展，固定 750×1344 会铺不满留边。
 
 // 菜单页顶部这一行：右上角「设置」按钮 + 左上角「金币」胶囊。
 // 两者共用同一条基线 TOP_ROW_Y、且左右边缘按 TOP_ROW_EDGE 对称镜像——改任何一项都要成对改，
@@ -211,7 +231,7 @@ export default class NuonuoApp extends Component {
         overlay.addComponent(BlockInputEvents);
 
         // 面板（源工程 #1a2c52）
-        const panel = this.panel(overlay, "panel", 0, 0, 560, 590, [26, 44, 82]);
+        const panel = this.panel(overlay, "panel", 0, 0, 560, 640, [26, 44, 82]);
         this.label(panel, "title", "设置", 44, 0, 250);
 
         // 音乐 / 音效 / 震动 三开关（文字随状态刷新）
@@ -232,6 +252,11 @@ export default class NuonuoApp extends Component {
 
         // 底部说明
         this.label(panel, "hint", "音乐、音效与震动可分别开关", 22, 0, -230, C_SUBTEXT);
+
+        // 版本号：只认 game.js 里注入的（插件构建时写入）；读不到就显示「开发版」
+        // （编辑器预览 / 编辑器自带构建 / 插件没填版本号）
+        const buildVersion = resolveBuildVersion();
+        this.label(panel, "version", buildVersion ? `v${buildVersion}` : '开发版', 20, 0, -285, C_SUBTEXT);
 
         // 右上角关闭（关弹窗回到菜单，恢复显示游戏圈按钮）
         this.btn(panel, "close", "✕", 250, 255, 56, 56, C_WHITE, () => {

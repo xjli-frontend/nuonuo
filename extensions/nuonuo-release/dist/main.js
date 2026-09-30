@@ -14,7 +14,7 @@
  */
 
 const { existsSync, readFileSync, writeFileSync, mkdirSync } = require('fs');
-const { join, dirname } = require('path');
+const { join, dirname, isAbsolute } = require('path');
 const { spawn } = require('child_process');
 const uploader = require('./wechat-upload');
 
@@ -41,6 +41,9 @@ const state = {
     logSeq: 0,
     lastResult: null,
     startedAt: null,
+    /** 这次**真正**用的构建参数（runBuild 里写入）。导出日志时不能现读 builder.json ——
+     *  构建结束后那里会多出一条新的成功记录，读到的是它，和本次日志里的 taskMap key 对不上。 */
+    lastBuildPlan: null,
 };
 
 // ------------------------------------------------------------ 状态 / 日志
@@ -99,11 +102,141 @@ function saveSettings(patch) {
     return merged;
 }
 
-/** 1.0.9 → 1.0.10；不是纯数字三段就原样返回 */
-function bumpVersion(version) {
-    const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(version || '').trim());
-    if (!m) return String(version || '');
-    return `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
+/** 面板要的那几个字段（getState / probeEnv 共用一份形状，面板就能复用同一个灌值函数） */
+function settingsSnapshot() {
+    const s = loadSettings();
+    return {
+        lastVersion: s.lastVersion || '',
+        lastDesc: s.lastDesc || '',
+        lastUploadedVersion: s.lastUploadedVersion || '',
+        // 勾选框的持久化（没存过就是 false）
+        skipBuild: !!s.skipBuild,
+        buildOnly: !!s.buildOnly,
+        allowEnablePort: !!s.allowEnablePort,
+        refreshAfterBuild: !!s.refreshAfterBuild,
+    };
+}
+
+/**
+ * 保证 `profiles/nuonuo-release.json` 存在，返回它的绝对路径。
+ *
+ * 面板上的「打开版本号文件」要在文件管理器里定位它 —— 文件不存在的话定位会失败，
+ * 所以先按当前值把全部字段写出来一份（空存档就写出 `lastVersion: ""` 这些键，
+ * 用户打开能看懂该改哪儿，而不是一个 `{}`）。
+ */
+function ensureSettingsFile() {
+    const p = settingsPath();
+    if (existsSync(p)) return p;
+    const s = settingsSnapshot();
+    saveSettings({
+        lastVersion: s.lastVersion,
+        lastDesc: s.lastDesc,
+        lastUploadedVersion: s.lastUploadedVersion,
+        skipBuild: s.skipBuild,
+        buildOnly: s.buildOnly,
+        allowEnablePort: s.allowEnablePort,
+        refreshAfterBuild: s.refreshAfterBuild,
+    });
+    return settingsPath();
+}
+
+// ----------------------------------------------------------- 构建版本号
+
+/**
+ * 只认 1.0.0 形式；其余一律当空串 —— 既防手滑，也防把引号注进 game.js 里。
+ * （版本号现在是注入到产物的 `game.js`，不再写 `BuildVersion.ts` —— 见下面那节
+ * 「往产物 game.js 注入版本号」。）
+ */
+function normalizeVersion(version) {
+    const v = String(version == null ? '' : version).trim();
+    return /^\d+\.\d+\.\d+$/.test(v) ? v : '';
+}
+
+/** 产物目录。options.buildPath 是 'project://build' 这种 project URL，也可能是绝对路径。 */
+function resolveBuildDir(options) {
+    const fallback = join(Editor.Project.path, 'build', 'wechatgame');
+    if (!options) return fallback;
+    const raw = String(options.buildPath || 'project://build');
+    const outputName = String(options.outputName || 'wechatgame');
+    let base = raw;
+    if (raw.startsWith('project://')) base = join(Editor.Project.path, raw.slice('project://'.length));
+    else if (!isAbsolute(raw)) base = join(Editor.Project.path, raw);
+    return join(base, outputName);
+}
+
+/** 这次发版用的产物目录 —— 构建、上传、版本校验三处必须走同一个，否则迟早对不上 */
+function currentBuildDir() {
+    const plan = loadBuildOptions();
+    return resolveBuildDir(plan.ok ? plan.options : null);
+}
+
+// ------------------------------------------------- 往产物 game.js 注入版本号
+
+/**
+ * 游戏设置弹窗里显示的版本号，读的是**产物的 `game.js` 里注入的全局变量**
+ * （`GameGlobal.__NUONUO_VERSION__`），而不是编译进包的 `BuildVersion.ts` 常量。
+ *
+ * 为什么绕这一下：微信开发者工具会缓存**编译过的脚本 bundle**（`assets/main/index.js`），
+ * 改了 `BuildVersion.ts` 它经常不重新编译 —— 表现就是「改了版本号、构建成功、游戏里还是
+ * 上一个号」。`game.js` 是入口脚本，每次都会被重新读取，所以把版本号放这里最稳。
+ *
+ * 注入是**幂等**的：整行只有一条，带唯一标记，重复构建按标记替换，不会越插越多。
+ * 用 `GameGlobal`（小游戏全局，`game.js` 第一行就能用）而不是 `window` ——
+ * 那会儿 `web-adapter.js` 还没跑，`window` 可能还不存在。
+ */
+const GAME_JS_MARKER = '__NUONUO_VERSION__';
+const GAME_JS_INJECT_RE = /^[^\n]*__NUONUO_VERSION__[^\n]*\n?/m;
+
+function renderGameJsInjection(version) {
+    return `;(function(v){try{if(typeof GameGlobal!=="undefined")GameGlobal.${GAME_JS_MARKER}=v;`
+        + `if(typeof window!=="undefined")window.${GAME_JS_MARKER}=v;}catch(e){}})(${JSON.stringify(normalizeVersion(version))});`
+        + `/*${GAME_JS_MARKER}*/`;
+}
+
+/** 把版本号写进 `<产物>/game.js`。`version` 为空串 = 只清掉上次注入的，保持「开发版」。 */
+function injectGameJsVersion(buildDir, version) {
+    const file = join(buildDir, 'game.js');
+    if (!existsSync(file)) return { ok: false, message: `没找到 ${file}` };
+
+    let text;
+    try {
+        text = readFileSync(file, 'utf8');
+    } catch (err) {
+        return { ok: false, message: `读不了 game.js：${err && err.message ? err.message : err}` };
+    }
+
+    const had = GAME_JS_INJECT_RE.test(text);
+    const v = normalizeVersion(version);
+
+    let next;
+    let message;
+    if (!v) {
+        next = had ? text.replace(GAME_JS_INJECT_RE, '') : text;
+        message = had ? '没填版本号，已清掉 game.js 里上次注入的版本号' : '没填版本号，game.js 保持原样';
+    } else {
+        const line = renderGameJsInjection(v);
+        next = had ? text.replace(GAME_JS_INJECT_RE, `${line}\n`) : `${line}\n${text}`;
+        message = `已写进 game.js：GameGlobal.__NUONUO_VERSION__ = ${v}`;
+    }
+
+    if (next === text) return { ok: true, message, version: v };
+    try {
+        writeFileSync(file, next, 'utf8');
+    } catch (err) {
+        return { ok: false, message: `写 game.js 失败：${err && err.message ? err.message : err}` };
+    }
+    return { ok: true, message, version: v };
+}
+
+/** 读 `<产物>/game.js` 里注入的版本号：没注入返回 null（旧产物 / 不是插件构建的包） */
+function gameJsVersion(buildDir) {
+    try {
+        const text = readFileSync(join(buildDir, 'game.js'), 'utf8');
+        const m = /__NUONUO_VERSION__[^\n]*?\("([^"]*)"\)/.exec(text);
+        return m ? m[1] : null;
+    } catch (_) {
+        return null;
+    }
 }
 
 // --------------------------------------------------------------- 构建
@@ -198,12 +331,24 @@ function describeBuildPlan() {
     };
 }
 
-async function runBuild() {
+async function runBuild(version) {
     const plan = loadBuildOptions();
     if (!plan.ok) {
         return { ok: false, message: plan.message, hint: plan.hint };
     }
     const options = plan.options;
+    const buildDir = resolveBuildDir(options);
+    const tag = normalizeVersion(version);
+
+    // 记下这次**真正**用的那份参数，给导出日志的头部用。
+    // 不能等导出时现读 builder.json：构建一成功那里就多一条新记录，读到的是它，key 对不上。
+    state.lastBuildPlan = {
+        taskKey: plan.taskKey,
+        source: plan.source,
+        sceneCount: plan.sceneCount,
+        packages: options.packages || {},
+        buildDir,
+    };
 
     log(`[构建] 平台 wechatgame → ${options.buildPath}/${options.outputName}`);
     log(`[构建] 参数来自 ${plan.source} 的 taskMap["${plan.taskKey}"]（${plan.sceneCount} 个场景）`);
@@ -235,6 +380,39 @@ async function runBuild() {
         // 注意 TaskAddResult.BUSY === 0 是 falsy，不能写 `if (result)`，必须显式比 36
         if (result === BUILD_SUCCESS) {
             log('[构建] 成功');
+
+            // 1) 把版本号注入产物的 game.js —— 游戏设置弹窗显示的就是它。
+            //    走这条路是因为开发者工具会缓存编译过的脚本 bundle（assets/main/index.js），
+            //    改了 BuildVersion.ts 它经常不重新编译；game.js 是入口脚本，每次都会被重新读取。
+            const injected = injectGameJsVersion(buildDir, tag);
+            log(`[版本] ${injected.message}`);
+            if (!injected.ok) {
+                return { ok: false, message: `没能把版本号写进 game.js：${injected.message}` };
+            }
+
+            // 2) 让开发者工具重新读产物 —— **默认关着**，面板「选项」里那个勾选框才开。
+            //
+            //    为什么改成 opt-in：这一步会清掉开发者工具的**文件缓存**，而那份缓存很可能正是它
+            //    解析 `require` 用的东西 —— 清完再启动游戏，就会报
+            //    `module 'web-adapter.js' is not defined, require args is './web-adapter'`
+            //    （实测踩过一次，代价是游戏直接起不来）。所以不再每次构建都自动执行。
+            //
+            //    什么时候真需要它：**切换过构建配置**（尤其开/关「分离引擎」，产物里引擎文件整套换名）
+            //    之后，工具内部的项目状态会和磁盘对不上。那时候手动勾上跑一次就好。
+            if (loadSettings().refreshAfterBuild) {
+                try {
+                    const refreshed = await uploader.refreshProject(buildDir);
+                    log(`[工具] ${refreshed.message}`);
+                    for (const step of (refreshed.steps || [])) {
+                        if (!step.ok) log(`[工具]   ${step.step} 失败：${step.error}`);
+                    }
+                } catch (err) {
+                    log(`[工具] 刷新开发者工具出错（不影响构建）：${err && err.message ? err.message : err}`);
+                }
+            } else {
+                log('[工具] 没勾「构建后让开发者工具重新读产物」，跳过（只切过构建配置时才需要）');
+            }
+
             return { ok: true };
         }
 
@@ -263,7 +441,7 @@ async function runBuild() {
 // --------------------------------------------------------------- 上传
 
 async function runUpload(payload) {
-    const buildDir = join(Editor.Project.path, 'build', 'wechatgame');
+    const buildDir = currentBuildDir();
 
     setPhase('uploading', '上传中', 0);
 
@@ -291,6 +469,39 @@ async function runUpload(payload) {
     return result;
 }
 
+// ------------------------------------------------------------ 登录预检
+
+/**
+ * 上传前先查登录态，**放在构建之前**。
+ *
+ * 上传要求 IDE 已登录（登录态在 IDE 手里，CLI 只是个客户端），而没登录时 CLI 会
+ * 吞掉错误并以 **0** 退出 —— 光看退出码看不出来。构建又要跑十几秒，
+ * 等构建完才发现没登录太亏，所以把这一步提到最前面。
+ *
+ * 只拦「明确查到没登录」这一种。查不出来（工具没装、输出没读懂、超时）一律放行：
+ * 宁可让上传自己去报错，也不能因为探测失灵把正常流程堵死。
+ */
+async function preflightLogin(payload = {}) {
+    const r = await uploader.checkLogin({
+        devtoolsDir: payload.devtoolsDir,
+        projectDir: currentBuildDir(),
+    });
+
+    if (r.login === true) {
+        log('[登录] 开发者工具已登录');
+        return null;
+    }
+    if (r.login === false) {
+        return {
+            ok: false,
+            message: '微信开发者工具没有登录（或登录已过期）',
+            hint: '在开发者工具里扫码登录后重试；之后可用面板上的「重新检测」确认',
+        };
+    }
+    log(`[提示] 登录态没查出来（${r.message || '未知原因'}），直接往下走`);
+    return null;
+}
+
 // ------------------------------------------------------------ 主流程
 
 async function buildAndUpload(payload = {}) {
@@ -315,13 +526,25 @@ async function buildAndUpload(payload = {}) {
     state.logs = [];
     state.logSeq = 0;
     state.lastResult = null;
+    state.lastBuildPlan = null;
     state.startedAt = Date.now();
 
-    setPhase('building', payload.skipBuild ? '跳过构建' : '准备构建', 0);
+    setPhase('building', '检查登录态', 0);
 
     try {
+        const loginFail = await preflightLogin(payload);
+        if (loginFail) {
+            state.lastResult = { ok: false, stage: 'preflight', message: loginFail.message, hint: loginFail.hint };
+            log(`[失败] ${loginFail.message}`);
+            if (loginFail.hint) log(`[提示] ${loginFail.hint}`);
+            setPhase('done', loginFail.message, 0);
+            return state.lastResult;
+        }
+
+        setPhase('building', payload.skipBuild ? '跳过构建' : '准备构建', 0);
+
         if (!payload.skipBuild) {
-            const built = await runBuild();
+            const built = await runBuild(version);
             if (!built.ok) {
                 state.lastResult = { ok: false, stage: 'build', message: built.message, hint: built.hint };
                 log(`[失败] ${built.message}`);
@@ -331,6 +554,39 @@ async function buildAndUpload(payload = {}) {
             }
         } else {
             log('[构建] 已跳过，直接用现有产物');
+        }
+
+        // 上传前**无条件**核对版本号。
+        //
+        // 游戏设置弹窗显示的就是产物 `game.js` 里注入的那个（`GameGlobal.__NUONUO_VERSION__`），
+        // 读不到就显示「开发版」—— 所以这里只认它：注入值跟要发的号不一致、或者压根没注入，
+        // 都拦下来。上传不可撤销，而「后台记 1.0.8、游戏里是开发版/上一个号」只有进游戏才看得出来。
+        //
+        // 这段原来只在「跳过构建」那条路上跑，构建那条路顶多 warn 一句就照常上传，所以漏过。
+        {
+            const injected = gameJsVersion(currentBuildDir());
+            const what = payload.skipBuild ? '现有产物' : '刚构建出来的产物';
+            let problem = null;
+
+            if (injected === null) {
+                problem = `${what}的 game.js 里没有版本号注入 —— 游戏里会显示「开发版」，`
+                    + `跟后台要记的 ${version} 对不上`;
+            } else if (injected !== version) {
+                problem = `${what}对不上：game.js 里注入的是 ${injected}，这次要发的是 ${version}`;
+            }
+
+            if (problem) {
+                const hint = payload.skipBuild
+                    ? '取消勾选「跳过构建」让插件重新构建一次（它会把版本号写进 game.js），或删掉 build/wechatgame 重建'
+                    : '再点一次构建通常就好；仍不行就删掉 build/wechatgame 重新构建';
+                state.lastResult = { ok: false, stage: 'stale-build', message: problem, hint };
+                log(`[失败] ${problem}`);
+                log(`[提示] ${hint}`);
+                setPhase('done', problem, 0);
+                return state.lastResult;
+            }
+
+            log(`[版本] game.js 里注入的版本号确认是 ${injected}`);
         }
 
         const uploaded = await runUpload({ version, desc, allowEnablePort: payload.allowEnablePort });
@@ -347,7 +603,7 @@ async function buildAndUpload(payload = {}) {
             return state.lastResult;
         }
 
-        saveSettings({ lastUploadedVersion: version, lastVersion: bumpVersion(version), lastDesc: desc });
+        saveSettings({ lastUploadedVersion: version, lastDesc: desc });
         state.lastResult = { ok: true, stage: 'upload', message: `已上传 ${version}`, version };
         setPhase('done', `已上传 ${version}`, 1);
         return state.lastResult;
@@ -364,6 +620,107 @@ async function buildAndUpload(payload = {}) {
     }
 }
 
+// ------------------------------------------------------------ 日志导出
+
+/** 文件名用：2026-09-30_18-20-31（不用空格和冒号 —— 空格路径在 CLI 那边踩过坑） */
+function fileStamp(d) {
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+        + `_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+}
+
+/** 正文用：2026-09-30 18:20:31 */
+function readStamp(d) {
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+        + ` ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function readPluginVersion() {
+    try {
+        return JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')).version || '?';
+    } catch (_) {
+        return '?';
+    }
+}
+
+function describeEditor() {
+    const parts = [];
+    try {
+        if (Editor.App && Editor.App.version) parts.push(`Cocos Creator ${Editor.App.version}`);
+    } catch (_) { /* 拿不到版本号不影响导出 */ }
+    parts.push(`${process.platform} ${process.arch}`);
+    parts.push(`node ${process.versions.node}`);
+    return parts.join(' | ');
+}
+
+/**
+ * 「复制日志」要导出的文本：先一段上下文头，再是完整日志。
+ *
+ * 为什么要带头部：面板上看到的日志只是主进程 `log()` 写进去的那些，光看它答不出
+ * 「这次构建到底开没开分离引擎」「产物目录是哪个」「环境探测成什么样」这类问题，
+ * 而这些恰恰是最需要一眼看到的信息。平台选项（`packages`）里就藏着 `separateEngine`。
+ *
+ * 日志本身是环形缓冲（MAX_LOG_LINES），被 shift() 挤掉的旧行拿不回来。
+ */
+function buildDiagnosticText() {
+    const now = new Date();
+    const env = uploader.probe({ projectRoot: Editor.Project.path });
+    const plan = loadBuildOptions();
+    const settings = loadSettings();
+    const out = [];
+
+    out.push('===== nuonuo-release 诊断日志 =====');
+    out.push(`导出时间: ${readStamp(now)}`);
+    out.push(`插件版本: ${PKG_NAME} ${readPluginVersion()}`);
+    out.push(`编辑器: ${describeEditor()}`);
+    out.push(`工程路径: ${Editor.Project.path}`);
+    out.push(`面板设置: version=${settings.lastVersion || ''} desc=${settings.lastDesc || ''}`
+        + ` skipBuild=${!!settings.skipBuild} buildOnly=${!!settings.buildOnly}`
+        + ` allowEnablePort=${!!settings.allowEnablePort}`
+        + ` lastUploaded=${settings.lastUploadedVersion || ''}`);
+    out.push(`运行状态: runId=${state.runId} phase=${state.phase} running=${!!state.running}`
+        + (state.startedAt ? ` startedAt=${readStamp(new Date(state.startedAt))}` : ''));
+
+    if (!state.lastResult) {
+        out.push('上次结果: （本进程还没跑过任务）');
+    } else if (state.lastResult.ok) {
+        out.push(`上次结果: 成功 stage=${state.lastResult.stage} message=${state.lastResult.message}`);
+    } else {
+        out.push(`上次结果: 失败 stage=${state.lastResult.stage} message=${state.lastResult.message}`
+            + (state.lastResult.hint ? ` hint=${state.lastResult.hint}` : ''));
+    }
+
+    // 优先报「这次真正用过的」参数。构建成功后 builder.json 会多出一条新记录，
+    // 此时 loadBuildOptions() 拿到的是它 —— 直接报它就会和本次日志里的 taskMap key 对不上。
+    const used = state.lastBuildPlan;
+    if (used) {
+        out.push(`本次构建参数: ${used.source} taskMap["${used.taskKey}"]（${used.sceneCount} 个场景）`);
+        out.push(`本次平台选项: ${JSON.stringify(used.packages)}`);
+        out.push(`产物目录: ${used.buildDir}`);
+    } else if (plan.ok) {
+        out.push('本次构建参数: （这次没构建 —— 跳过构建或只上传）');
+        out.push(`下次构建会用: ${plan.source} taskMap["${plan.taskKey}"]（${plan.sceneCount} 个场景）`);
+        out.push(`下次平台选项: ${JSON.stringify(plan.options.packages || {})}`);
+        out.push(`产物目录: ${resolveBuildDir(plan.options)}`);
+    } else {
+        out.push(`构建参数: 不可用 —— ${plan.message}${plan.hint ? `（${plan.hint}）` : ''}`);
+    }
+
+    out.push('环境探测:');
+    out.push(`  开发者工具: ${env.devtoolsOk ? env.devtoolsDir : (env.devtoolsHint || '未找到')}`);
+    out.push(`  服务端口: ${env.servicePort ? '已开启' : `未开启（${env.servicePortHint || ''}）`}`);
+    out.push(`  构建产物: ${env.buildExists ? env.buildDir : '还没有构建产物'}`);
+    out.push(`  AppID: ${env.appid || '-'}`);
+
+    out.push(`--- 日志（本次运行，${state.logs.length} 行，缓冲上限 ${MAX_LOG_LINES} 行）---`);
+    if (!state.logs.length) out.push('（还没有日志：面板打开后没跑过任务，或者任务刚启动）');
+    for (const line of state.logs) out.push(line);
+    out.push('===== 日志结束 =====');
+
+    return { text: out.join('\n'), lines: state.logs.length };
+}
+
 // --------------------------------------------------------------- 导出
 
 exports.methods = {
@@ -373,7 +730,6 @@ exports.methods = {
 
     /** 面板 ready() 时拉全量状态（含日志 backlog） */
     getState(payload = {}) {
-        const settings = loadSettings();
         const env = uploader.probe({
             devtoolsDir: payload.devtoolsDir,
             projectRoot: Editor.Project.path,
@@ -381,20 +737,12 @@ exports.methods = {
         return {
             env,
             buildPlan: describeBuildPlan(),
-            settings: {
-                lastVersion: settings.lastVersion || '',
-                lastDesc: settings.lastDesc || '',
-                lastUploadedVersion: settings.lastUploadedVersion || '',
-                // 三个勾选框的持久化（没存过就是 false）
-                skipBuild: !!settings.skipBuild,
-                buildOnly: !!settings.buildOnly,
-                allowEnablePort: !!settings.allowEnablePort,
-            },
+            settings: settingsSnapshot(),
             state: snapshot(),
         };
     },
 
-    /** 只探测环境，不动状态。形状和 getState 的前两项一致，方便面板复用同一个渲染函数 */
+    /** 只探测环境，不动状态。形状和 getState 的前几项一致，方便面板复用同一个渲染函数 */
     probeEnv(payload = {}) {
         return {
             env: uploader.probe({
@@ -402,7 +750,22 @@ exports.methods = {
                 projectRoot: Editor.Project.path,
             }),
             buildPlan: describeBuildPlan(),
+            // 顺便把设置也带上：面板「重新检测」时能把你手改过的版本号读回来
+            settings: settingsSnapshot(),
         };
+    },
+
+    /**
+     * 面板「环境」卡片的登录态那一行。
+     *
+     * 单独一条消息（没并进 probeEnv）：查一次要起一个 CLI 进程，IDE 没在跑时
+     * 这条命令还会把 IDE 拉起来，慢的时候好几秒 —— 不能拖住面板首次渲染。
+     */
+    checkLogin(payload = {}) {
+        return uploader.checkLogin({
+            devtoolsDir: payload.devtoolsDir,
+            projectDir: currentBuildDir(),
+        });
     },
 
     buildAndUpload,
@@ -414,13 +777,20 @@ exports.methods = {
         state.running = true;
         state.runId = runId;
         state.logs = [];
-    state.logSeq = 0;
+        state.logSeq = 0;
         state.lastResult = null;
+        state.lastBuildPlan = null;
         state.startedAt = Date.now();
         setPhase('building', '准备构建', 0);
 
+        // 这个勾选框是**存本机**的（关掉面板再打开也不会回默认值），很容易忘了自己勾着 ——
+        // 结果点了以为在发版，其实只构建。日志里明说一句，省得对着后台找包（踩过一次）。
+        log('[提示] 「只构建，不上传」是勾着的 —— 这次只构建，不会传到微信后台');
+
         try {
-            const built = await runBuild();
+            // 只构建也把版本号打进去 —— 否则「只构建 → 勾跳过构建再上传」会传上去一个写着
+            // 「开发版」的包，而后台记着另一个版本号。没填版本号就不打（包显示开发版）。
+            const built = await runBuild(payload.version);
             state.lastResult = built.ok
                 ? { ok: true, stage: 'build', message: '构建完成' }
                 : { ok: false, stage: 'build', message: built.message, hint: built.hint };
@@ -450,17 +820,28 @@ exports.methods = {
         state.running = true;
         state.runId = runId;
         state.logs = [];
-    state.logSeq = 0;
+        state.logSeq = 0;
         state.lastResult = null;
+        state.lastBuildPlan = null;
         state.startedAt = Date.now();
 
         try {
+            setPhase('uploading', '检查登录态', 0);
+            const loginFail = await preflightLogin(payload);
+            if (loginFail) {
+                state.lastResult = { ok: false, stage: 'preflight', message: loginFail.message, hint: loginFail.hint };
+                log(`[失败] ${loginFail.message}`);
+                if (loginFail.hint) log(`[提示] ${loginFail.hint}`);
+                setPhase('done', loginFail.message, 0);
+                return state.lastResult;
+            }
+
             const uploaded = await runUpload({ version, desc, allowEnablePort: payload.allowEnablePort });
             state.lastResult = uploaded.ok
                 ? { ok: true, stage: 'upload', message: `已上传 ${version}`, version }
                 : { ok: false, stage: 'upload', message: uploaded.message, hint: uploaded.hint };
             if (uploaded.ok) {
-                saveSettings({ lastUploadedVersion: version, lastVersion: bumpVersion(version), lastDesc: desc });
+                saveSettings({ lastUploadedVersion: version, lastDesc: desc });
             } else {
                 log(`[失败] ${uploaded.message}`);
                 if (uploaded.hint) log(`[提示] ${uploaded.hint}`);
@@ -487,6 +868,7 @@ exports.methods = {
         if (payload.skipBuild !== undefined) patch.skipBuild = !!payload.skipBuild;
         if (payload.buildOnly !== undefined) patch.buildOnly = !!payload.buildOnly;
         if (payload.allowEnablePort !== undefined) patch.allowEnablePort = !!payload.allowEnablePort;
+        if (payload.refreshAfterBuild !== undefined) patch.refreshAfterBuild = !!payload.refreshAfterBuild;
         return saveSettings(patch);
     },
 
@@ -494,7 +876,7 @@ exports.methods = {
     openBuildDir() {
         const root = Editor.Project.path;
         // 产物目录还没有就退到 build/，总比什么都不开强
-        const dir = [join(root, 'build', 'wechatgame'), join(root, 'build')].find((d) => existsSync(d));
+        const dir = [currentBuildDir(), join(root, 'build')].find((d) => existsSync(d));
         if (!dir) {
             return { ok: false, message: '还没有构建产物（build/ 目录不存在）', hint: '先构建一次' };
         }
@@ -511,6 +893,71 @@ exports.methods = {
             return { ok: true, dir };
         } catch (err) {
             return { ok: false, message: `打不开文件夹：${err && err.message ? err.message : err}`, dir };
+        }
+    },
+
+    /**
+     * 面板「打开版本号文件」。
+     *
+     * 版本号就存在 `profiles/nuonuo-release.json` 的 `lastVersion` 里（面板打开、点「重新检测」
+     * 都会把它读回来）。这里在文件管理器里**定位并选中**这个文件：
+     *
+     * - 比直接调默认程序打开安全：不用过 `cmd.exe`（路径含中文时 cmd 的代码页会乱码），
+     *   也不依赖 .json 有没有关联编辑器；
+     * - 选中之后敲一下回车就能用默认编辑器打开。
+     *
+     * 文件不存在就先按当前值写一份出来（一个 `{}` 会让人不知道该改哪儿）。
+     */
+    openVersionFile() {
+        let file;
+        try {
+            file = ensureSettingsFile();
+        } catch (err) {
+            return { ok: false, message: `写设置文件失败：${err && err.message ? err.message : err}` };
+        }
+
+        const dir = dirname(file);
+        // win: explorer /select,<路径> 是「选中」；mac: open -R 同义；linux 没有统一做法，开目录
+        const cmd = process.platform === 'win32' ? 'explorer'
+            : process.platform === 'darwin' ? 'open'
+                : 'xdg-open';
+        const args = process.platform === 'win32' ? [`/select,${file}`]
+            : process.platform === 'darwin' ? ['-R', file]
+                : [dir];
+
+        // 和 openBuildDir 一样：不用 shell:true；explorer 成功时也返回退出码 1，所以不看退出码
+        try {
+            const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+            child.on('error', (err) => console.warn('[nuonuo-release] 打开版本号文件失败:', err));
+            child.unref();
+            return { ok: true, file, dir };
+        } catch (err) {
+            return { ok: false, message: `打不开：${err && err.message ? err.message : err}`, file };
+        }
+    },
+
+    /**
+     * 面板「复制日志」。
+     *
+     * 文本由主进程拼（只有它手里有完整的 state.logs 和这套构建参数），**并且每次都先落盘**：
+     * 面板的 webview 里剪贴板不保证可用（navigator.clipboard 要安全上下文，
+     * execCommand 也可能被拒），磁盘那份是兜底。
+     *
+     * 固定再写一份 `last.log` —— 排查时不用去猜这一次的时间戳文件名，直接看固定路径。
+     * 目录是 `temp/nuonuo-release/`，和上传时 `-i` 的 upload-info.json 同一处。
+     */
+    exportLog() {
+        try {
+            const { text, lines } = buildDiagnosticText();
+            const dir = join(Editor.Project.path, 'temp', PKG_NAME);
+            const lastFile = join(dir, 'last.log');
+            const file = join(dir, `log-${fileStamp(new Date())}.log`);
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(file, text, 'utf8');
+            writeFileSync(lastFile, text, 'utf8');
+            return { ok: true, text, lines, chars: text.length, file, lastFile };
+        } catch (err) {
+            return { ok: false, message: `导出日志失败：${err && err.message ? err.message : err}` };
         }
     },
 };

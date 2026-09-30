@@ -38,6 +38,11 @@ const HTML = `
             <span class="env-value" id="val-port">检测中…</span>
         </div>
         <div class="env-row">
+            <span class="dot" id="dot-login"></span>
+            <span class="env-label">登录</span>
+            <span class="env-value" id="val-login">检测中…</span>
+        </div>
+        <div class="env-row">
             <span class="dot" id="dot-build"></span>
             <span class="env-label">构建产物</span>
             <span class="env-value" id="val-build">检测中…</span>
@@ -56,7 +61,12 @@ const HTML = `
     </section>
 
     <section class="card">
-        <div class="card-title">版本</div>
+        <div class="card-head">
+            <span class="card-title">版本</span>
+            <span class="head-actions">
+                <button class="mini" id="btn-version-file">打开版本号文件</button>
+            </span>
+        </div>
         <div class="field">
             <label class="field-label" for="in-version">版本号</label>
             <input class="text" id="in-version" type="text" placeholder="1.0.0" spellcheck="false" />
@@ -74,6 +84,8 @@ const HTML = `
         <label class="check"><input type="checkbox" id="ck-build-only" /><span>只构建，不上传</span></label>
         <label class="check"><input type="checkbox" id="ck-allow-port" /><span>允许自动开启服务端口</span></label>
         <div class="hint" id="hint-allow-port">服务端口属于开发者工具的安全设置，默认不替你改。勾上后上传时若检测到未开启，会让 CLI 自行拉起。</div>
+        <label class="check"><input type="checkbox" id="ck-refresh-tools" /><span>构建后让开发者工具重新读产物</span></label>
+        <div class="hint" id="hint-refresh-tools">平时不用勾。只在切换过构建配置（尤其开/关「分离引擎」—— 产物里引擎文件整套换名）之后才需要：它会重置工具的文件监听、清掉编译和文件缓存（不动存档）。副作用是工具可能得重新编译一次，清文件缓存还可能让游戏启动时找不到模块，所以默认关着。</div>
     </section>
 
     <div class="actions">
@@ -84,7 +96,10 @@ const HTML = `
     <section class="card grow">
         <div class="card-head">
             <span class="card-title">日志</span>
-            <button class="mini" id="btn-clear">清空面板</button>
+            <span class="head-actions">
+                <button class="mini" id="btn-copy">复制日志</button>
+                <button class="mini" id="btn-clear">清空面板</button>
+            </span>
         </div>
         <div class="log" id="log"></div>
     </section>
@@ -189,14 +204,17 @@ const $ = {
     btnRefresh: '#btn-refresh',
     btnOpenDir: '#btn-open-dir',
     btnRun: '#btn-run',
+    btnCopy: '#btn-copy',
     btnClear: '#btn-clear',
 
     dotDevtools: '#dot-devtools',
     dotPort: '#dot-port',
+    dotLogin: '#dot-login',
     dotBuild: '#dot-build',
     dotPlan: '#dot-plan',
     valDevtools: '#val-devtools',
     valPort: '#val-port',
+    valLogin: '#val-login',
     valBuild: '#val-build',
     valPlan: '#val-plan',
     valAppid: '#val-appid',
@@ -205,11 +223,14 @@ const $ = {
     inVersion: '#in-version',
     inDesc: '#in-desc',
     hintVersion: '#hint-version',
+    btnVersionFile: '#btn-version-file',
 
     ckSkipBuild: '#ck-skip-build',
     ckBuildOnly: '#ck-build-only',
     ckAllowPort: '#ck-allow-port',
     hintAllowPort: '#hint-allow-port',
+    ckRefreshTools: '#ck-refresh-tools',
+    hintRefreshTools: '#hint-refresh-tools',
 
     status: '#status',
     log: '#log',
@@ -273,6 +294,39 @@ module.exports = Editor.Panel.define({
             }
         },
 
+        /**
+         * 「登录」那一行。
+         *
+         * 登录态在开发者工具手里，CLI 只是客户端 —— 没登录的话上传必然失败，
+         * 而且 CLI 是**吞掉错误以 0 退出**的，不看这一行很难猜到原因。
+         *
+         * 单独查（要起一次 CLI 进程，IDE 没在跑时还有可能把它拉起来），
+         * 所以没并进 renderEnv，由 refreshLogin 异步补上。
+         */
+        renderLogin(r) {
+            const $d = this.$;
+            if (!$d.valLogin) return;
+
+            const v = r && r.login;
+            if (v === true) {
+                $d.valLogin.textContent = '已登录';
+            } else if (v === false) {
+                $d.valLogin.textContent = '未登录（先在开发者工具里扫码登录）';
+            } else {
+                $d.valLogin.textContent = (r && r.message) || '查不到';
+            }
+            // 查不出来画灰点：探测失灵 ≠ 有问题，别拿红点吓人
+            this._setEnvRow('dotLogin', v === true ? 'dot-green' : v === false ? 'dot-red' : 'dot-grey');
+        },
+
+        async refreshLogin() {
+            try {
+                this.renderLogin(await Editor.Message.request(PKG, 'check-login', {}));
+            } catch (err) {
+                this.renderLogin({ login: null, message: '查询失败' });
+            }
+        },
+
         renderBusy(busy, phase, message, progress) {
             const $d = this.$;
             if ($d.btnRun) $d.btnRun.disabled = !!busy;
@@ -302,12 +356,124 @@ module.exports = Editor.Panel.define({
         },
 
         /**
+         * `message does not exist` 基本只有一个原因：**这条消息是新加的，而编辑器还没重新加载扩展**。
+         *
+         * 改 `package.json` 的 `contributions.messages` 只在**扩展加载时**读一次 ——
+         * 光重开面板不够（面板 JS 会重读，所以新按钮能看到，但消息在编辑器里不存在）。
+         * 得「重新加载扩展」，不行就重启编辑器。（踩过一次，见 README 第 0 条。）
+         */
+        _missingMessageHint(err) {
+            const m = (err && err.message) || '';
+            return /message does not exist/i.test(m)
+                ? ' —— 插件新增的消息要重新加载扩展才会注册（编辑器 → 扩展 → nuonuo-release → 重新加载；'
+                    + '不行就重启编辑器），只重开面板不够'
+                : '';
+        },
+
+        /**
          * 只清界面，**不动 _logSeq**：日志的真身在主进程，重置序号的话下次轮询
          * 会把刚清掉的内容原样再拉回来。
          */
         clearLog() {
             const box = this.$ && this.$.log;
             if (box) box.innerHTML = '';
+        },
+
+        /**
+         * 把文本塞进剪贴板。两条路都试：
+         * 1. `navigator.clipboard.writeText` —— 现代 API，但面板不是安全上下文时会被拒；
+         * 2. 隐藏 textarea + `document.execCommand('copy')` —— 在用户手势里触发，Electron 下最稳。
+         * textarea 不能 `display:none`（那样选不中），挪到屏幕外就行。
+         */
+        async copyText(text) {
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                }
+            } catch (_) { /* 落到 execCommand */ }
+
+            let ta = null;
+            try {
+                ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', 'readonly');
+                ta.style.position = 'fixed';
+                ta.style.top = '0';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                ta.setSelectionRange(0, ta.value.length);
+                return !!document.execCommand('copy');
+            } catch (_) {
+                return false;
+            } finally {
+                if (ta && ta.parentNode) ta.parentNode.removeChild(ta);
+            }
+        },
+
+        /**
+         * 「复制日志」。
+         *
+         * 文本由主进程 `export-log` 拼（只有它手里有完整的 `state.logs`、构建参数和环境探测），
+         * 面板只管塞进剪贴板。主进程**每次都先落盘**，所以就算剪贴板被拒，也能照着日志里
+         * 打出来的路径去拿 `temp/nuonuo-release/last.log`。
+         *
+         * 连主进程都联系不上时，退而复制面板上已经渲染出来的那些行 —— 总比什么都没有强，
+         * 但要标明是「面板可见部分」，免得被当成全量。
+         */
+        async copyLog() {
+            const btn = this.$ && this.$.btnCopy;
+            const say = (text) => { if (this.$.status) this.$.status.textContent = text; };
+            if (btn) btn.disabled = true;
+
+            let text = '';
+            let file = null;
+            let lines = 0;
+            let degraded = false;
+
+            try {
+                const r = await Editor.Message.request(PKG, 'export-log', {});
+                if (r && r.ok) {
+                    text = r.text;
+                    file = r.file;
+                    lines = r.lines;
+                } else {
+                    degraded = true;
+                    this.appendLog(`导出日志失败：${(r && r.message) || '未知原因'}`, 'l-err');
+                }
+            } catch (err) {
+                degraded = true;
+                this.appendLog(`和主进程通信失败：${err && err.message ? err.message : err}`
+                    + this._missingMessageHint(err), 'l-err');
+            }
+
+            if (!text) {
+                // 主进程那侧拿不到，至少把面板上看得见的这部分复制走
+                text = (this.$.log && this.$.log.textContent) || '';
+                lines = text ? text.split(/\r?\n/).length : 0;
+                degraded = true;
+            }
+
+            if (!text) {
+                this.appendLog('没有日志可以复制', 'l-err');
+                say('没有日志可以复制');
+                if (btn) btn.disabled = false;
+                return;
+            }
+
+            const copied = await this.copyText(text);
+            if (copied) {
+                this.appendLog(`已复制${degraded ? '面板可见部分' : ''}日志 ${lines} 行`
+                    + (file ? `；同时落盘 ${file}` : ''), 'l-ok');
+                say('日志已复制');
+            } else {
+                this.appendLog(file
+                    ? `剪贴板不可用，日志已落盘：${file}`
+                    : '剪贴板不可用，又联系不上主进程：请手动选中日志框里的内容复制', 'l-err');
+                say('剪贴板不可用');
+            }
+            if (btn) btn.disabled = false;
         },
 
         /**
@@ -389,20 +555,8 @@ module.exports = Editor.Panel.define({
 
                 if (first) {
                     this.renderEnv(res.env, res.buildPlan);
-
-                    const s = res.settings || {};
-                    if (this.$.inVersion && !this.$.inVersion.value) {
-                        // 从没发过版时给个 1.0.0 当起点，省得对着空框发呆
-                        this.$.inVersion.value = s.lastVersion || '1.0.0';
-                    }
-                    if (this.$.inDesc && !this.$.inDesc.value) {
-                        this.$.inDesc.value = s.lastDesc || '';
-                    }
-                    if (this.$.hintVersion && s.lastUploadedVersion) {
-                        this.$.hintVersion.textContent = `上次上传：${s.lastUploadedVersion}；格式：数字.数字.数字`;
-                    }
-
-                    this.applyChecks(s);
+                    this.refreshLogin();
+                    this.applySettings(res.settings);
                 }
 
                 this.renderState(res.state);
@@ -414,11 +568,34 @@ module.exports = Editor.Panel.define({
             });
         },
 
+        /**
+         * 把主进程存的设置灌进控件。**正在编辑的那个输入框不动** ——
+         * 用「打开版本号文件」改完文件、回来点「重新检测」时，别把还没失焦的内容盖掉。
+         */
+        applySettings(s) {
+            if (!s) return;
+            const $d = this.$;
+            const editing = document.activeElement;
+            if ($d.inVersion && $d.inVersion !== editing) {
+                // 从没发过版时给个 1.0.0 当起点，省得对着空框发呆
+                $d.inVersion.value = s.lastVersion || '1.0.0';
+            }
+            if ($d.inDesc && $d.inDesc !== editing) {
+                $d.inDesc.value = s.lastDesc || '';
+            }
+            if ($d.hintVersion) {
+                $d.hintVersion.textContent = s.lastUploadedVersion
+                    ? `上次上传：${s.lastUploadedVersion}；格式：数字.数字.数字`
+                    : '格式：数字.数字.数字';
+            }
+            this.applyChecks(s);
+        },
+
         // ---------------------------------------------------------- 勾选框
 
         /**
          * 勾选框的状态存到本机（profiles/nuonuo-release.json），下次打开面板原样恢复。
-         * 三个一起发：跳过构建 / 只构建是互斥的，只发一个可能把另一个改脏。
+         * 四个一起发：跳过构建 / 只构建是互斥的，只发一个可能把另一个改脏。
          *
          * 注意：这里给 checkbox 赋 .checked 不会触发 change 事件，
          * 所以恢复时不会反过来再写一次存档。
@@ -429,6 +606,7 @@ module.exports = Editor.Panel.define({
                 skipBuild: !!($d.ckSkipBuild && $d.ckSkipBuild.checked),
                 buildOnly: !!($d.ckBuildOnly && $d.ckBuildOnly.checked),
                 allowEnablePort: !!($d.ckAllowPort && $d.ckAllowPort.checked),
+                refreshAfterBuild: !!($d.ckRefreshTools && $d.ckRefreshTools.checked),
             }).catch(() => {});
         },
 
@@ -438,6 +616,8 @@ module.exports = Editor.Panel.define({
             if ($d.ckSkipBuild) $d.ckSkipBuild.checked = !!s.skipBuild;
             if ($d.ckBuildOnly) $d.ckBuildOnly.checked = !!s.buildOnly;
             if ($d.ckAllowPort) $d.ckAllowPort.checked = !!s.allowEnablePort;
+            // 默认关：这一步会清开发者工具的文件缓存，有可能把游戏启动搞坏（见 README 第 9 条）
+            if ($d.ckRefreshTools) $d.ckRefreshTools.checked = !!s.refreshAfterBuild;
         },
 
         // ---------------------------------------------------------- 交互
@@ -453,13 +633,38 @@ module.exports = Editor.Panel.define({
             }
         },
 
+        /**
+         * 「打开版本号文件」：在文件管理器里定位 `profiles/nuonuo-release.json`。
+         *
+         * 改完记得回来点一下「重新检测」把新版本号读回面板（或者关掉面板重开）——
+         * 不然面板还拿着旧值，一点构建就把它又写回去。
+         */
+        async openVersionFile() {
+            try {
+                const r = await Editor.Message.request(PKG, 'open-version-file', {});
+                if (r && r.ok === false) {
+                    this.appendLog(`打开版本号文件失败：${r.message || '未知原因'}`, 'l-err');
+                    return;
+                }
+                this.appendLog(`版本号文件：${r.file}`, 'l-dim');
+                this.appendLog('改 lastVersion 保存后，点「重新检测」把新值读回面板（否则面板会拿旧值覆盖它）');
+            } catch (err) {
+                this.appendLog(`打开版本号文件失败：${err && err.message ? err.message : err}`
+                    + this._missingMessageHint(err), 'l-err');
+            }
+        },
+
         async refreshEnv() {
             try {
                 const res = await Editor.Message.request(PKG, 'probe-env', {});
                 this.renderEnv(res && res.env, res && res.buildPlan);
+                // 顺手把设置读回来：手改过 profiles/nuonuo-release.json 的版本号能在这儿生效
+                this.applySettings(res && res.settings);
             } catch (err) {
                 this.appendLog(`检测环境失败：${err && err.message ? err.message : err}`, 'l-err');
             }
+            // 登录态是另一次查询（要起 CLI），不拖住上面那条同步渲染
+            this.refreshLogin();
         },
 
         collect() {
@@ -510,7 +715,9 @@ module.exports = Editor.Panel.define({
 
             try {
                 if (opts.buildOnly) {
-                    const r = await Editor.Message.request(PKG, 'build-only', {});
+                    // 版本号照传：只构建也把它打进包里，否则之后勾「跳过构建」上传时
+                    // 包里的版本号和后台记的对不上（见主进程里的产物守卫）
+                    const r = await Editor.Message.request(PKG, 'build-only', { version: opts.version });
                     if (r && r.ok === false) say(r.message);
                     else say('构建完成');
                 } else {
@@ -541,7 +748,9 @@ module.exports = Editor.Panel.define({
 
         on(this.$.btnRefresh, 'click', () => this.refreshEnv());
         on(this.$.btnOpenDir, 'click', () => this.openBuildDir());
+        on(this.$.btnVersionFile, 'click', () => this.openVersionFile());
         on(this.$.btnRun, 'click', () => this.run());
+        on(this.$.btnCopy, 'click', () => this.copyLog());
         on(this.$.btnClear, 'click', () => this.clearLog());
 
         on(this.$.ckSkipBuild, 'change', () => {
@@ -555,6 +764,9 @@ module.exports = Editor.Panel.define({
         on(this.$.ckAllowPort, 'change', () => {
             this.saveChecks();
             this.refreshEnv();
+        });
+        on(this.$.ckRefreshTools, 'change', () => {
+            this.saveChecks();
         });
 
         on(this.$.inVersion, 'change', () => {

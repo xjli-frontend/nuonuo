@@ -52,8 +52,6 @@ export class PlatHelper {
     }
 
     static playVideo(callback: Function, videoEnum: VideoEnum.RewardedVideo) {
-        callback && callback(true);
-        return;
         if (this.isWX) {
             this.reportUserBehaviorBranchAnalytics(ReportEnum.RewardedVideo, 2, videoEnum);
             WeChatPlatHelper.playVideo((completed: boolean | number) => {
@@ -71,8 +69,14 @@ export class PlatHelper {
                 }
             }, videoEnum)
         } else {
+            // 非微信环境（编辑器预览 / 浏览器 / 头条等）：没有激励视频可放，直接放发。
+            //
+            // 这条日志是刻意留的诊断信息 —— 道具按钮上的「看广告」图标只由数量为 0 决定
+            // （见 NuonuoApp 的 applyPropVisual），跟运行环境无关，所以**看到广告图标不代表
+            // 跑在微信里**。排查「点了广告没看就直接发奖」时：控制台只有这一句、没有任何
+            // `激励广告…`（微信分支才会打），就说明 isWX 判成了 false，走的是这条分支。
+            console.log("非微信环境（isWX=false），跳过激励视频直接发奖");
             callback && callback(true);
-            console.log("广告观看完成，获得奖励")
         }
     }
 

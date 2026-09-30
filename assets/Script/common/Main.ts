@@ -36,6 +36,9 @@ export default class Main extends Component {
         const appNode = new Node("NuonuoApp");
         appNode.layer = canvas.layer;
         canvas.addChild(appNode);
+        // 768×1344 是这个节点自身的尺寸，**不是设计分辨率**（设计分辨率是 750×1344，
+        // 见 settings/v2/packages/project.json）。这里没有 Mask，尺寸不裁剪子节点；
+        // 全屏底板/遮罩一律走 view.getVisibleSize()，所以别把它「修正」成 750。
         appNode.addComponent(UITransform).setContentSize(768, 1344);
         appNode.addComponent(NuonuoApp).boot();
     }

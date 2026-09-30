@@ -98,7 +98,10 @@ export class WeChatPlatHelper {
         const self = this;
         console.log('RegisterViewAdInstance', "AdunitId =====》", adId)
         if (this.videoAdInstance) {
-            this.videoAdInstance.destory();
+            // 注意是 destroy 不是 destory（微信 RewardedVideoAd 没有 destory 方法）。
+            // 拼错的话这里是「切换广告位」时才走到的一行：切到第二个广告位
+            // （撤回 → 破冰锤 / 金币翻倍）时必抛 TypeError，广告直接调不出来。
+            this.videoAdInstance.destroy();
         }
         let videoAdInstance = wx.createRewardedVideoAd({
             adUnitId: adId,
@@ -111,17 +114,16 @@ export class WeChatPlatHelper {
             console.log('激励广告回调onError', "AdunitId =====》", adId, "加载失败", err)
         }
         const listenerOnClose = (res) => {
-            // 用户点击了【关闭广告】按钮
-            // 小于 2.1.0 的基础库版本，res 是一个 undefined
-            var completed = null;
-            if ((res && res.isEnded) || res === undefined) {
-                // 正常播放结束，可以下发游戏奖励
-                completed = true;
-            }
-            else {
-                // 播放中途退出，不下发游戏奖励
-                completed = -1;
-            }
+            // 用户点击了【关闭广告】按钮。
+            //
+            // **只有明确 res.isEnded === true 才算看完、才发奖。**
+            // 原写法把 `res === undefined` 也算「完播」，依据是「小于 2.1.0 的基础库版本，
+            // res 是一个 undefined」这条老约定（2.1.0 是 2018 年的基础库，现在不存在了）。
+            // 但真机上**广告没能正常播放**（广告位未上线 / 无填充 / 被系统或用户设置拦掉）
+            // 时也会以 `res === undefined` 触发 onClose —— 于是「一帧广告没看到却发了奖」，
+            // 正是「真机上点广告直接到手」的现象。走这条路的回调永远拿不到 isEnded，
+            // 所以宁可漏发也不能错发；真出问题时看下面这行日志里 res 到底是什么。
+            const completed = (res && res.isEnded) ? true : -1;
             console.log('激励广告回调listenerOnClose', "AdunitId =====》", adId, res)
             self.showVideoResult(completed);
         }
@@ -188,7 +190,8 @@ export class WeChatPlatHelper {
     static customAdArr: Array<any> = [];
     static showCustomAd(targetNode: Node, videoEnum: VideoEnum.CustomVideo = VideoEnum.CustomVideo.Result, isCalcX?: boolean) {
         if (this.customAdArr[videoEnum]) {
-            this.customAdArr[videoEnum].destory();
+            // 同上：是 destroy 不是 destory（CustomAd 也没有 destory 方法）
+            this.customAdArr[videoEnum].destroy();
         }
         const customAdId = customAdIds[videoEnum];
         const { leftPos, topPos, imgsize } = this.calcPosSize(targetNode);
